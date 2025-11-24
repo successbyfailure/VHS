@@ -21,6 +21,10 @@ services:
     volumes:
       - vhs_config:/config
       - vhs_cache:/app/data
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "2m"
     restart: unless-stopped
 
   env_sync:
@@ -29,6 +33,10 @@ services:
       python /app/scripts/update_env_from_example.py
     volumes:
       - ./.env:/app/.env
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "2m"
     depends_on:
       - vhs
 
@@ -38,6 +46,10 @@ services:
       --cleanup --interval 300 --scope vhs --label-enable
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "2m"
     restart: unless-stopped
 
 volumes:
