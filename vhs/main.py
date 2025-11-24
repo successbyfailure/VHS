@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import random
 import re
 import subprocess
 import tempfile
@@ -74,6 +75,16 @@ YTDLP_USER_AGENT = os.getenv(
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
 )
+YTDLP_BOT_PROTECTION_RETRIES = int(os.getenv("YTDLP_BOT_PROTECTION_RETRIES", "3"))
+YTDLP_BOT_PROTECTION_DELAY = float(os.getenv("YTDLP_BOT_PROTECTION_DELAY", "6"))
+_raw_extractor_args = os.getenv("YTDLP_EXTRACTOR_ARGS")
+if _raw_extractor_args:
+    try:
+        YTDLP_EXTRACTOR_ARGS = json.loads(_raw_extractor_args)
+    except json.JSONDecodeError:
+        YTDLP_EXTRACTOR_ARGS = {"youtube": [_raw_extractor_args]}
+else:
+    YTDLP_EXTRACTOR_ARGS = {"youtube": ["player_client=default"]}
 TRANSCRIPTION_ENDPOINT = os.getenv("TRANSCRIPTION_ENDPOINT", "https://api.openai.com/v1")
 TRANSCRIPTION_API_KEY = os.getenv("TRANSCRIPTION_API_KEY")
 TRANSCRIPTION_MODEL = os.getenv("TRANSCRIPTION_MODEL", "gpt-4o-mini-transcribe")
@@ -661,6 +672,9 @@ def build_ydl_options(
         "http_headers": {"User-Agent": YTDLP_USER_AGENT},
     }
 
+    if YTDLP_EXTRACTOR_ARGS:
+        base_opts["extractor_args"] = YTDLP_EXTRACTOR_ARGS
+
     if not force_no_proxy and YTDLP_PROXY:
         base_opts["proxy"] = YTDLP_PROXY
     if YTDLP_COOKIES_FILE:
@@ -699,6 +713,55 @@ def build_ydl_options(
 def should_retry_without_proxy(error: Exception) -> bool:
     message = str(error).lower()
     return "proxy" in message or "403" in message or "forbidden" in message
+
+
+def _should_retry_with_new_user_agent(error: Exception) -> bool:
+    message = str(error).lower()
+    if "sign in" in message and "not a bot" in message:
+        return True
+    if "bot" in message and "confirm" in message:
+        return True
+    return False
+
+
+def _generate_user_agent() -> str:
+    major = random.randint(121, 126)
+    build = random.randint(0, 5999)
+    patch = random.randint(0, 199)
+    mac_minor = random.randint(0, 7)
+    return (
+        f"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_{mac_minor}) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        f"Chrome/{major}.0.{build}.{patch} Safari/537.36"
+    )
+
+
+def extract_info_with_user_agent_retries(
+    url: str, *, ydl_opts: Dict, download: bool
+) -> Dict:
+    attempts = max(1, YTDLP_BOT_PROTECTION_RETRIES)
+    delay = max(0.0, YTDLP_BOT_PROTECTION_DELAY)
+    current_agent = ydl_opts.get("http_headers", {}).get("User-Agent", YTDLP_USER_AGENT)
+    last_error: Optional[Exception] = None
+
+    for attempt in range(attempts):
+        opts = {**ydl_opts}
+        headers = {**opts.get("http_headers", {})}
+        headers["User-Agent"] = current_agent
+        opts["http_headers"] = headers
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                return ydl.extract_info(url, download=download)
+        except Exception as exc:  # pragma: no cover - passthrough errors
+            last_error = exc
+            if attempt >= attempts - 1 or not _should_retry_with_new_user_agent(exc):
+                raise
+            current_agent = _generate_user_agent()
+            time.sleep(delay)
+
+    if last_error:
+        raise last_error
+    raise DownloadError("Fallo inesperado al extraer información")
 
 
 def _extract_media_stats(info: Dict[str, Any]) -> Dict[str, Any]:
@@ -761,8 +824,9 @@ def download_media(url: str, media_format: str) -> Tuple[Path, Dict]:
             normalized_format, cache_key_value=key, force_no_proxy=force_no_proxy
         )
         try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                return ydl.extract_info(url, download=True)
+            return extract_info_with_user_agent_retries(
+                url, ydl_opts=ydl_opts, download=True
+            )
         except Exception as exc:  # pragma: no cover - yt-dlp errors are direct
             if not force_no_proxy and should_retry_without_proxy(exc):
                 return extract(force_no_proxy=True)
@@ -871,8 +935,9 @@ def probe_media(url: str) -> Dict[str, Any]:
     ydl_opts = build_ydl_options(DEFAULT_VIDEO_FORMAT, cache_key_value=key)
     ydl_opts["skip_download"] = True
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
+        info = extract_info_with_user_agent_retries(
+            url, ydl_opts=ydl_opts, download=False
+        )
     except Exception as exc:  # pragma: no cover - passthrough errors
         raise DownloadError(str(exc)) from exc
 
@@ -919,6 +984,8 @@ def search_media(query: str, limit: int = 8) -> List[Dict[str, Any]]:
         ydl_opts["proxy"] = YTDLP_PROXY
     if YTDLP_COOKIES_FILE:
         ydl_opts["cookiefile"] = YTDLP_COOKIES_FILE
+    if YTDLP_EXTRACTOR_ARGS:
+        ydl_opts["extractor_args"] = YTDLP_EXTRACTOR_ARGS
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
