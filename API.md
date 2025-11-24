@@ -65,7 +65,7 @@ Los endpoints de conversión y transcripción aceptan los siguientes formatos:
 - `DELETE /api/cache/{cache_key}`: elimina el archivo y su metadato.
 
 ### Estadísticas y salud
-- `GET /api/stats/usage`: totales por día (descargas, ffmpeg, transcripciones, palabras/tokens) y top de formatos.
+- `GET /api/stats/usage`: totales por día (descargas, ffmpeg, transcripciones, palabras/tokens, errores) y top de formatos.
 - `GET /api/health`: responde `{ "status": "ok" }` (incluye versión si está configurada).
 
 ## Notas sobre metadatos

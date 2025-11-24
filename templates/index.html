@@ -848,6 +848,7 @@
           const transcriptionJobs = payload.points.map(
             (point) => point.transcriptions || 0,
           );
+          const errors = payload.points.map((point) => point.errors || 0);
           const datasets = [
             {
               label: 'Descargas',
@@ -921,6 +922,15 @@
               fill: false,
               yAxisID: 'y',
             },
+            {
+              label: 'Errores',
+              data: errors,
+              borderColor: '#ef4444',
+              backgroundColor: 'rgba(239, 68, 68, 0.25)',
+              tension: 0.3,
+              fill: false,
+              yAxisID: 'y',
+            },
           ];
           if (usageChart) {
             usageChart.data.labels = labels;
@@ -967,6 +977,7 @@
           const apiTotal = payload.api_downloads || 0;
           const webTotal = payload.web_downloads || 0;
           const otherTotal = payload.other_downloads || 0;
+          const totalErrors = payload.errors || 0;
           let summary = `Últimos ${payload.days} días: ${payload.total} descargas (API: ${apiTotal} · Web: ${webTotal}`;
           if (otherTotal) {
             summary += ` · Otras: ${otherTotal}`;
@@ -983,6 +994,9 @@
           }
           if (payload.transcriptions) {
             summary += ` · ${payload.transcriptions} entregas de texto`;
+          }
+          if (totalErrors) {
+            summary += ` · ${totalErrors} errores de servicio`;
           }
           if (payload.unique_formats) {
             summary += ` · ${payload.unique_formats} formatos solicitados`;
