@@ -82,18 +82,37 @@ WHISPER_ASR_TIMEOUT = int(os.getenv("WHISPER_ASR_TIMEOUT", "600"))
 FFMPEG_BINARY = os.getenv("FFMPEG_BINARY", "ffmpeg")
 
 AUDIO_FORMAT_PROFILES = {
-    "audio": {"codec": "mp3", "preferred_quality": "192"},
-    "audio_low": {"codec": "mp3", "preferred_quality": "96"},
+    "audio_high": {
+        "format": "bestaudio/best",
+        "passthrough": True,
+        "description": "Mejor audio disponible desde la fuente (sin recomprimir)",
+    },
+    "audio_med": {
+        "codec": "mp3",
+        "preferred_quality": "96",
+        "description": "MP3 a 96 kbps equilibrado",
+    },
+    "audio_low": {
+        "codec": "mp3",
+        "preferred_quality": "48",
+        "description": "MP3 a 48 kbps optimizado para tamaños pequeños",
+    },
 }
 VIDEO_FORMAT_PROFILES = {
     "video_high": {
         "format": "bv*+ba/b",
         "merge_output_format": "mp4",
+        "description": "Video en la mejor calidad disponible desde la fuente",
+    },
+    "video_med": {
+        "format": "bv*[height<=720]+ba/b[height<=720]/worst",
+        "merge_output_format": "mp4",
+        "description": "Video reescalado hasta 720p",
     },
     "video_low": {
-        # Prioriza streams con altura <= 480p y cae al peor disponible en caso extremo.
         "format": "bv*[height<=480]+ba/b[height<=480]/worst",
         "merge_output_format": "mp4",
+        "description": "Video comprimido hasta 480p",
     },
 }
 DEFAULT_VIDEO_FORMAT = "video_high"
@@ -101,77 +120,8 @@ VIDEO_FORMAT_ALIASES = {
     "video": DEFAULT_VIDEO_FORMAT,
 }
 FFMPEG_PRESETS: Dict[str, Dict[str, Any]] = {
-    "ffmpeg_audio": {
-        "description": "Extrae audio en MP3 usando ffmpeg (libmp3lame 192 kbps)",
-        "extension": ".mp3",
-        "media_type": "audio/mpeg",
-        "args": ["-vn", "-acodec", "libmp3lame", "-b:a", "192k"],
-    },
-    "ffmpeg_audio_wav": {
-        "description": "Convierte a WAV sin pérdidas con ffmpeg",
-        "extension": ".wav",
-        "media_type": "audio/wav",
-        "args": ["-vn", "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2"],
-    },
-    "ffmpeg_1440p": {
-        "description": "Reescala el video a 1440p para masters de alta fidelidad",
-        "extension": ".mp4",
-        "media_type": "video/mp4",
-        "args": [
-            "-vf",
-            "scale=-2:1440",
-            "-c:v",
-            "libx264",
-            "-preset",
-            "faster",
-            "-crf",
-            "19",
-            "-c:a",
-            "aac",
-            "-b:a",
-            "192k",
-        ],
-    },
-    "ffmpeg_1080p": {
-        "description": "Copia intermedia a 1080p equilibrada para streaming",
-        "extension": ".mp4",
-        "media_type": "video/mp4",
-        "args": [
-            "-vf",
-            "scale=-2:1080",
-            "-c:v",
-            "libx264",
-            "-preset",
-            "veryfast",
-            "-crf",
-            "20",
-            "-c:a",
-            "aac",
-            "-b:a",
-            "176k",
-        ],
-    },
-    "ffmpeg_720p": {
-        "description": "Reescala el video a 720p manteniendo audio AAC",
-        "extension": ".mp4",
-        "media_type": "video/mp4",
-        "args": [
-            "-vf",
-            "scale=-2:720",
-            "-c:v",
-            "libx264",
-            "-preset",
-            "veryfast",
-            "-crf",
-            "21",
-            "-c:a",
-            "aac",
-            "-b:a",
-            "160k",
-        ],
-    },
     "ffmpeg_480p": {
-        "description": "Copia ligera a 480p, ideal para móviles retro",
+        "description": "Transcodifica a 480p (h.264 2.5 Mbps / AAC 128 kbps)",
         "extension": ".mp4",
         "media_type": "video/mp4",
         "args": [
@@ -181,23 +131,148 @@ FFMPEG_PRESETS: Dict[str, Dict[str, Any]] = {
             "libx264",
             "-preset",
             "faster",
-            "-crf",
-            "23",
+            "-b:v",
+            "2500k",
             "-c:a",
             "aac",
             "-b:a",
             "128k",
         ],
+        "video_height": 480,
+        "video_bitrate_kbps": 2500,
+        "audio_bitrate_kbps": 128,
+    },
+    "ffmpeg_720p": {
+        "description": "Transcodifica a 720p (h.264 4 Mbps / AAC 160 kbps)",
+        "extension": ".mp4",
+        "media_type": "video/mp4",
+        "args": [
+            "-vf",
+            "scale=-2:720",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-b:v",
+            "4000k",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "160k",
+        ],
+        "video_height": 720,
+        "video_bitrate_kbps": 4000,
+        "audio_bitrate_kbps": 160,
+    },
+    "ffmpeg_1080p": {
+        "description": "Transcodifica a 1080p (h.264 6.5 Mbps / AAC 176 kbps)",
+        "extension": ".mp4",
+        "media_type": "video/mp4",
+        "args": [
+            "-vf",
+            "scale=-2:1080",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-b:v",
+            "6500k",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "176k",
+        ],
+        "video_height": 1080,
+        "video_bitrate_kbps": 6500,
+        "audio_bitrate_kbps": 176,
+    },
+    "ffmpeg_1440p": {
+        "description": "Transcodifica a 1440p (h.264 12 Mbps / AAC 192 kbps)",
+        "extension": ".mp4",
+        "media_type": "video/mp4",
+        "args": [
+            "-vf",
+            "scale=-2:1440",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "faster",
+            "-b:v",
+            "12000k",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+        ],
+        "video_height": 1440,
+        "video_bitrate_kbps": 12000,
+        "audio_bitrate_kbps": 192,
+    },
+    "ffmpeg_3840p": {
+        "description": "Transcodifica a 4K (h.264 20 Mbps / AAC 256 kbps)",
+        "extension": ".mp4",
+        "media_type": "video/mp4",
+        "args": [
+            "-vf",
+            "scale=-2:2160",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "fast",
+            "-b:v",
+            "20000k",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "256k",
+        ],
+        "video_height": 2160,
+        "video_bitrate_kbps": 20000,
+        "audio_bitrate_kbps": 256,
+    },
+    "ffmpeg_wav": {
+        "description": "Convierte a WAV sin pérdidas (44.1 kHz, estéreo)",
+        "extension": ".wav",
+        "media_type": "audio/wav",
+        "args": ["-vn", "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2"],
+        "audio_bitrate_kbps": 1411,
+    },
+    "ffmpeg_mp3-192": {
+        "description": "MP3 192 kbps con libmp3lame",
+        "extension": ".mp3",
+        "media_type": "audio/mpeg",
+        "args": ["-vn", "-acodec", "libmp3lame", "-b:a", "192k"],
+        "audio_bitrate_kbps": 192,
+    },
+    "ffmpeg_mp3-128": {
+        "description": "MP3 128 kbps",
+        "extension": ".mp3",
+        "media_type": "audio/mpeg",
+        "args": ["-vn", "-acodec", "libmp3lame", "-b:a", "128k"],
+        "audio_bitrate_kbps": 128,
+    },
+    "ffmpeg_mp3-96": {
+        "description": "MP3 96 kbps",
+        "extension": ".mp3",
+        "media_type": "audio/mpeg",
+        "args": ["-vn", "-acodec", "libmp3lame", "-b:a", "96k"],
+        "audio_bitrate_kbps": 96,
+    },
+    "ffmpeg_mp3-64": {
+        "description": "MP3 64 kbps",
+        "extension": ".mp3",
+        "media_type": "audio/mpeg",
+        "args": ["-vn", "-acodec", "libmp3lame", "-b:a", "64k"],
+        "audio_bitrate_kbps": 64,
     },
 }
+TRANSCRIPTION_FORMATS = {"transcript_json", "transcript_text", "transcript_srt"}
 SUPPORTED_MEDIA_FORMATS = {
     *VIDEO_FORMAT_PROFILES,
     *VIDEO_FORMAT_ALIASES,
     *AUDIO_FORMAT_PROFILES,
     *FFMPEG_PRESETS,
-    "transcripcion",
-    "transcripcion_txt",
-    "transcripcion_srt",
+    *TRANSCRIPTION_FORMATS,
 }
 MEDIA_FORMAT_PATTERN = f"^({'|'.join(sorted(SUPPORTED_MEDIA_FORMATS))})$"
 
@@ -205,6 +280,10 @@ FORMAT_DESCRIPTIONS: List[Dict[str, str]] = [
     {
         "name": "video_high",
         "description": "MP4 en la mejor calidad disponible (mezcla best video + best audio)",
+    },
+    {
+        "name": "video_med",
+        "description": "MP4 hasta 720p pensado para la web",
     },
     {
         "name": "video_low",
@@ -215,23 +294,27 @@ FORMAT_DESCRIPTIONS: List[Dict[str, str]] = [
         "description": "Alias histórico de video_high para compatibilidad",
     },
     {
-        "name": "audio",
-        "description": "MP3 a 192 kbps con soporte directo de yt-dlp",
+        "name": "audio_high",
+        "description": "Mejor pista de audio disponible sin recomprimir",
+    },
+    {
+        "name": "audio_med",
+        "description": "MP3 a 96 kbps equilibrado",
     },
     {
         "name": "audio_low",
-        "description": "MP3 ligero a 96 kbps",
+        "description": "MP3 a 48 kbps optimizado para tamaños pequeños",
     },
     {
-        "name": "transcripcion",
+        "name": "transcript_json",
         "description": "JSON completo con segmentos y timestamps",
     },
     {
-        "name": "transcripcion_txt",
+        "name": "transcript_text",
         "description": "Solo el texto consolidado",
     },
     {
-        "name": "transcripcion_srt",
+        "name": "transcript_srt",
         "description": "Subtítulos compatibles con reproductores",
     },
 ]
@@ -286,12 +369,14 @@ def is_expired(meta: Dict) -> bool:
 FORMAT_EXTENSIONS = {
     "video": ".mp4",
     "video_high": ".mp4",
+    "video_med": ".mp4",
     "video_low": ".mp4",
-    "audio": ".mp3",
+    "audio_high": ".mp3",
+    "audio_med": ".mp3",
     "audio_low": ".mp3",
-    "transcripcion": ".json",
-    "transcripcion_txt": ".txt",
-    "transcripcion_srt": ".srt",
+    "transcript_json": ".json",
+    "transcript_text": ".txt",
+    "transcript_srt": ".srt",
 }
 
 for preset_name, preset in FFMPEG_PRESETS.items():
@@ -302,18 +387,18 @@ TRANSCRIPTION_FILE_SUFFIX = ".transcript.json"
 
 def media_type_for_format(media_format: str) -> str:
     normalized = normalize_media_format(media_format)
-    if normalized == "transcripcion":
+    if normalized == "transcript_json":
         return "application/json"
-    if normalized in TRANSCRIPTION_FORMATS - {"transcripcion"}:
+    if normalized in TRANSCRIPTION_FORMATS - {"transcript_json"}:
         return "text/plain"
     if normalized in FFMPEG_PRESETS:
         return FFMPEG_PRESETS[normalized]["media_type"]
     if normalized in AUDIO_FORMAT_PROFILES:
+        profile = AUDIO_FORMAT_PROFILES[normalized]
+        if profile.get("passthrough"):
+            return "audio/*"
         return "audio/mpeg"
     return "video/mp4"
-
-
-TRANSCRIPTION_FORMATS = {"transcripcion", "transcripcion_txt", "transcripcion_srt"}
 
 
 def categorize_media_format(media_format: str) -> str:
@@ -484,7 +569,7 @@ def build_download_name(title: str, file_path: Path, media_format: str) -> str:
     base = title.strip().lower() or "vhs"
     safe = re.sub(r"[^a-z0-9\-_.]+", "_", base)
     safe = re.sub(r"_+", "_", safe).strip("._") or "vhs"
-    extension = FORMAT_EXTENSIONS.get(media_format, file_path.suffix or ".bin")
+    extension = file_path.suffix or FORMAT_EXTENSIONS.get(media_format, ".bin")
     return f"{safe}{extension}"
 
 
@@ -583,14 +668,17 @@ def build_ydl_options(
 
     if normalized_format in AUDIO_FORMAT_PROFILES:
         profile = AUDIO_FORMAT_PROFILES[normalized_format]
+        if profile.get("passthrough"):
+            return {**base_opts, "format": profile.get("format", "bestaudio/best")}
+
         return {
             **base_opts,
-            "format": "bestaudio/best",
+            "format": profile.get("format", "bestaudio/best"),
             "postprocessors": [
                 {
                     "key": "FFmpegExtractAudio",
-                    "preferredcodec": profile["codec"],
-                    "preferredquality": profile["preferred_quality"],
+                    "preferredcodec": profile.get("codec", "mp3"),
+                    "preferredquality": str(profile.get("preferred_quality", "192")),
                 }
             ],
         }
@@ -611,6 +699,53 @@ def build_ydl_options(
 def should_retry_without_proxy(error: Exception) -> bool:
     message = str(error).lower()
     return "proxy" in message or "403" in message or "forbidden" in message
+
+
+def _extract_media_stats(info: Dict[str, Any]) -> Dict[str, Any]:
+    def _as_int(value: Any) -> Optional[int]:
+        try:
+            return int(float(value))
+        except (TypeError, ValueError):
+            return None
+
+    candidate: Dict[str, Any] = {}
+    requested = info.get("requested_downloads") or []
+    if isinstance(requested, list) and requested:
+        maybe = requested[0]
+        if isinstance(maybe, dict):
+            candidate = maybe
+    if not candidate:
+        candidate = info
+
+    width = _as_int(candidate.get("width") or info.get("width"))
+    height = _as_int(candidate.get("height") or info.get("height"))
+    abr = _as_int(candidate.get("abr") or info.get("abr"))
+    vbr = _as_int(candidate.get("vbr") or candidate.get("tbr") or info.get("tbr"))
+    fps = _as_int(candidate.get("fps") or info.get("fps"))
+    filesize = _as_int(
+        candidate.get("filesize")
+        or candidate.get("filesize_approx")
+        or info.get("filesize")
+        or info.get("filesize_approx")
+    )
+
+    metadata: Dict[str, Any] = {}
+    if width:
+        metadata["width"] = width
+    if height:
+        metadata["height"] = height
+    if abr:
+        metadata["audio_bitrate_kbps"] = abr
+    if vbr:
+        metadata["video_bitrate_kbps"] = vbr
+    if fps:
+        metadata["fps"] = fps
+    if filesize:
+        metadata["filesize_bytes"] = filesize
+    format_id = candidate.get("format_id") or info.get("format_id")
+    if isinstance(format_id, str):
+        metadata["format_id"] = format_id
+    return metadata
 
 
 def download_media(url: str, media_format: str) -> Tuple[Path, Dict]:
@@ -654,7 +789,12 @@ def download_media(url: str, media_format: str) -> Tuple[Path, Dict]:
         "media_format": normalized_format,
         "downloaded_at": time.time(),
         "cache_key": key,
+        **_extract_media_stats(info),
     }
+    try:
+        metadata["filesize_bytes"] = filepath.stat().st_size
+    except OSError:
+        pass
     metadata["_cache_hit"] = False
     save_meta(key, metadata)
     return filepath, metadata
@@ -697,7 +837,31 @@ def process_with_ffmpeg(url: str, media_format: str) -> Tuple[Path, Dict]:
         "cache_key": key,
         "_cache_hit": False,
         "preset": media_format,
+        "source_media": {
+            key: value
+            for key, value in source_metadata.items()
+            if key
+            in {
+                "width",
+                "height",
+                "video_bitrate_kbps",
+                "audio_bitrate_kbps",
+                "fps",
+                "format_id",
+                "filesize_bytes",
+            }
+        },
     }
+    if preset.get("video_height"):
+        metadata["target_height"] = preset["video_height"]
+    if preset.get("video_bitrate_kbps"):
+        metadata["target_video_bitrate_kbps"] = preset["video_bitrate_kbps"]
+    if preset.get("audio_bitrate_kbps"):
+        metadata["target_audio_bitrate_kbps"] = preset["audio_bitrate_kbps"]
+    try:
+        metadata["filesize_bytes"] = output_path.stat().st_size
+    except OSError:
+        pass
     save_meta(key, metadata)
     return output_path, metadata
 
@@ -877,9 +1041,9 @@ def estimate_transcription_stats(payload: Dict[str, Any]) -> Dict[str, int]:
 
 
 def render_transcription_payload(payload: Dict[str, Any], media_format: str) -> bytes:
-    if media_format == "transcripcion":
+    if media_format == "transcript_json":
         text = json.dumps(payload, ensure_ascii=False, indent=2)
-    elif media_format == "transcripcion_srt":
+    elif media_format == "transcript_srt":
         text = transcription_payload_to_srt(payload)
     else:
         text = _transcription_text_only(payload)
@@ -888,8 +1052,8 @@ def render_transcription_payload(payload: Dict[str, Any], media_format: str) -> 
 
 def build_transcription_download_name(source_name: str, media_format: str) -> str:
     extension = FORMAT_EXTENSIONS.get(media_format, ".txt")
-    dummy_path = Path(f"transcripcion{extension}")
-    return build_download_name(source_name or "transcripcion", dummy_path, media_format)
+    dummy_path = Path(f"transcript{extension}")
+    return build_download_name(source_name or "transcript", dummy_path, media_format)
 
 
 async def save_upload_file(upload: UploadFile) -> Path:
@@ -923,12 +1087,12 @@ def convert_uploaded_file_with_ffmpeg(source_path: Path, media_format: str) -> P
     return output_path
 
 
-def extract_audio_low_from_file(source_path: Path) -> Path:
+def extract_audio_profile_from_file(source_path: Path, profile_key: str = "audio_med") -> Path:
     if not source_path.exists():
         raise DownloadError("El archivo subido no está disponible para su procesamiento")
 
-    profile = AUDIO_FORMAT_PROFILES["audio_low"]
-    suffix = f".{profile['codec']}"
+    profile = AUDIO_FORMAT_PROFILES.get(profile_key) or AUDIO_FORMAT_PROFILES["audio_med"]
+    suffix = f".{profile.get('codec', 'mp3')}"
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         output_path = Path(tmp.name)
 
@@ -939,9 +1103,9 @@ def extract_audio_low_from_file(source_path: Path) -> Path:
         str(source_path),
         "-vn",
         "-acodec",
-        profile["codec"],
+        profile.get("codec", "mp3"),
         "-b:a",
-        f"{profile['preferred_quality']}k",
+        f"{profile.get('preferred_quality', '96')}k",
         str(output_path),
     ]
     result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -1012,11 +1176,7 @@ def transcribe_audio_file(file_path: Path) -> Dict[str, Any]:
 
 
 def generate_transcription_file(url: str, media_format: str) -> Tuple[Path, Dict]:
-    if media_format not in {
-        "transcripcion",
-        "transcripcion_txt",
-        "transcripcion_srt",
-    }:
+    if media_format not in TRANSCRIPTION_FORMATS:
         raise DownloadError("Formato de transcripción no soportado")
     key = cache_key(url, media_format)
     purge_expired_entries()
@@ -1024,17 +1184,17 @@ def generate_transcription_file(url: str, media_format: str) -> Tuple[Path, Dict
     if cached_path:
         return cached_path, cached_meta or {}
 
-    audio_path, audio_meta = download_media(url, "audio_low")
+    audio_path, audio_meta = download_media(url, "audio_med")
     transcript_payload = transcribe_audio_file(audio_path)
     transcription_stats = estimate_transcription_stats(transcript_payload)
 
-    if media_format == "transcripcion":
+    if media_format == "transcript_json":
         transcript_path = CACHE_DIR / f"{key}{TRANSCRIPTION_FILE_SUFFIX}"
         transcript_path.write_text(
             json.dumps(transcript_payload, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
-    elif media_format == "transcripcion_srt":
+    elif media_format == "transcript_srt":
         transcript_path = CACHE_DIR / f"{key}.srt"
         srt_content = transcription_payload_to_srt(transcript_payload)
         transcript_path.write_text(srt_content, encoding="utf-8")
@@ -1046,7 +1206,7 @@ def generate_transcription_file(url: str, media_format: str) -> Tuple[Path, Dict
         transcript_path.write_text(text_only.strip(), encoding="utf-8")
 
     metadata = {
-        "title": audio_meta.get("title") or "transcripcion",
+        "title": audio_meta.get("title") or "transcript",
         "filename": transcript_path.name,
         "source_url": url,
         "media_format": media_format,
@@ -1054,6 +1214,18 @@ def generate_transcription_file(url: str, media_format: str) -> Tuple[Path, Dict
         "cache_key": key,
         "transcription_stats": transcription_stats,
     }
+    metadata.update(
+        {
+            key: value
+            for key, value in audio_meta.items()
+            if key
+            in {
+                "audio_bitrate_kbps",
+                "filesize_bytes",
+                "format_id",
+            }
+        }
+    )
     metadata["_cache_hit"] = False
     save_meta(key, metadata)
     return transcript_path, metadata
@@ -1133,11 +1305,7 @@ async def download_endpoint(
     normalized_format = normalize_media_format(format_value)
 
     try:
-        if normalized_format in {
-            "transcripcion",
-            "transcripcion_txt",
-            "transcripcion_srt",
-        }:
+        if normalized_format in TRANSCRIPTION_FORMATS:
             file_path, metadata = await run_in_threadpool(
                 generate_transcription_file, url, normalized_format
             )
@@ -1208,6 +1376,13 @@ async def cache_status() -> Dict:
                 "source_url": data.get("source_url"),
                 "filename": filename,
                 "filesize_bytes": size,
+                "width": data.get("width"),
+                "height": data.get("height") or data.get("target_height"),
+                "video_bitrate_kbps": data.get("video_bitrate_kbps")
+                or data.get("target_video_bitrate_kbps"),
+                "audio_bitrate_kbps": data.get("audio_bitrate_kbps")
+                or data.get("target_audio_bitrate_kbps"),
+                "format_id": data.get("format_id"),
                 "age_seconds": age_seconds,
                 "downloaded_at": downloaded_at,
                 "downloaded_at_iso": iso_timestamp,
@@ -1269,7 +1444,7 @@ async def usage_stats() -> Dict[str, Any]:
 async def ffmpeg_upload(
     request: Request,
     background_tasks: BackgroundTasks,
-    media_format: str = Form("ffmpeg_audio"),
+    media_format: str = Form("ffmpeg_mp3-192"),
     file: UploadFile = File(...),
 ):
     format_value = (media_format or "").strip().lower()
@@ -1316,15 +1491,15 @@ async def ffmpeg_upload(
 @app.post("/api/transcribe/upload")
 async def transcribe_upload(
     request: Request,
-    media_format: str = Form("transcripcion_txt"),
+    media_format: str = Form("transcript_text"),
     file: UploadFile = File(...),
 ):
     format_value = media_format.lower()
-    if format_value not in {"transcripcion", "transcripcion_txt", "transcripcion_srt"}:
+    if format_value not in TRANSCRIPTION_FORMATS:
         raise HTTPException(
             status_code=400,
             detail=(
-                "Formato inválido. Usa 'transcripcion', 'transcripcion_txt' o 'transcripcion_srt'."
+                "Formato inválido. Usa 'transcript_json', 'transcript_text' o 'transcript_srt'."
             ),
         )
     if not file.filename:
@@ -1332,7 +1507,9 @@ async def transcribe_upload(
 
     temp_path = await save_upload_file(file)
     try:
-        audio_path = await run_in_threadpool(extract_audio_low_from_file, temp_path)
+        audio_path = await run_in_threadpool(
+            extract_audio_profile_from_file, temp_path, "audio_med"
+        )
         try:
             payload = await run_in_threadpool(transcribe_audio_file, audio_path)
         finally:
@@ -1347,10 +1524,10 @@ async def transcribe_upload(
             temp_path.unlink(missing_ok=True)
         except OSError:
             pass
-
+    
     transcription_stats = estimate_transcription_stats(payload)
     content = render_transcription_payload(payload, format_value)
-    download_name = build_transcription_download_name(file.filename or "transcripcion", format_value)
+    download_name = build_transcription_download_name(file.filename or "transcript", format_value)
     headers = {"Content-Disposition": f'attachment; filename="{download_name}"'}
     response = Response(
         content=content,

@@ -142,8 +142,10 @@
         <h2>Operaciones con ffmpeg</h2>
         <p>
           Usa el endpoint <code>POST /api/ffmpeg/upload</code> para subir un archivo local y recodificarlo con uno de
-          los presets <code>ffmpeg_*</code>. Puedes elegir entre <code>ffmpeg_audio</code>, <code>ffmpeg_audio_wav</code>,
-          <code>ffmpeg_1440p</code>, <code>ffmpeg_1080p</code>, <code>ffmpeg_720p</code> y <code>ffmpeg_480p</code>.
+          los presets <code>ffmpeg_*</code>. Puedes elegir entre <code>ffmpeg_mp3-192</code>,
+          <code>ffmpeg_mp3-128</code>, <code>ffmpeg_mp3-96</code>, <code>ffmpeg_mp3-64</code>,
+          <code>ffmpeg_wav</code>, <code>ffmpeg_480p</code>, <code>ffmpeg_720p</code>, <code>ffmpeg_1080p</code>,
+          <code>ffmpeg_1440p</code> y <code>ffmpeg_3840p</code>.
         </p>
         <pre><code>curl -X POST "${BASE_URL:-http://localhost:8601}/api/ffmpeg/upload" \
   -F "media_format=ffmpeg_1080p" \
@@ -166,10 +168,10 @@
         <h2>Transcribir un archivo local</h2>
         <p>Envía un archivo de audio o video con <code>POST /api/transcribe/upload</code> usando <code>multipart/form-data</code>.</p>
         <pre><code>curl -X POST "${BASE_URL:-http://localhost:8601}/api/transcribe/upload" \
-  -F "media_format=transcripcion_srt" \
+  -F "media_format=transcript_srt" \
   -F "file=@/ruta/al/audio.mp4" \
   -o subtitulos.srt</code></pre>
-        <p>Los formatos válidos son <code>transcripcion</code>, <code>transcripcion_txt</code> y <code>transcripcion_srt</code>.</p>
+        <p>Los formatos válidos son <code>transcript_json</code>, <code>transcript_text</code> y <code>transcript_srt</code>.</p>
       </section>
       <section>
         <h2>Gestionar la caché</h2>
