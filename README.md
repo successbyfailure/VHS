@@ -1,6 +1,6 @@
 # VHS · Video Harvester Service
 
-**Versión**: 0.1.2
+**Versión**: 0.1.3
 
 Servicio FastAPI que descarga, convierte y transcribe vídeos o audios mediante `yt-dlp` y perfiles rápidos de `ffmpeg`. Este directorio está listo para vivir como repositorio independiente y generar su propia imagen de Docker.
 
@@ -42,7 +42,7 @@ El contenedor expone `/api/health`, `/api/probe`, `/api/download`, `/api/cache`,
 ## Ejecución con Docker Compose
 
 El repositorio incluye un `docker-compose.yml` que prepara volúmenes separados para
-la configuración y la caché del servicio. Antes de levantar el
+la configuración y la caché del servicio dentro del propio directorio de trabajo. Antes de levantar el
 stack, crea tu fichero `.env` (puedes partir de `example.env`). El servicio `env_sync`
 monta el `.env` local y añade automáticamente nuevas variables que aparezcan en
 `example.env`, manteniendo intactos los valores existentes.
@@ -52,8 +52,8 @@ docker compose up -d
 ```
 
 El servicio quedará disponible en `http://localhost:8601` y mantendrá los datos en
-los volúmenes `vhs_config` (por ejemplo, para `YTDLP_COOKIES_FILE` en `/config`) y
-`vhs_cache` (cache y logs en `/app/data`). Un contenedor `watchtower` se encarga de
+los directorios locales `./config` (por ejemplo, para `YTDLP_COOKIES_FILE` en `/config`) y
+`./data` (caché y logs en `/app/data`). Un contenedor `watchtower` se encarga de
 actualizar solo el servicio `vhs` cuando aparezcan nuevas imágenes.
 
 ## Integración continua
