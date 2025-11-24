@@ -39,6 +39,23 @@ docker run --env-file .env -p 8601:8601 ghcr.io/successbyfailure/vhs:latest
 
 El contenedor expone `/api/health`, `/api/probe`, `/api/download`, `/api/cache`, `/api/transcribe/upload` y `/api/ffmpeg/upload`.
 
+## Ejecución con Docker Compose
+
+El repositorio incluye un `docker-compose.yml` que prepara volúmenes separados para
+la configuración y la caché del servicio. Antes de levantar el
+stack, crea tu fichero `.env` (puedes partir de `example.env`). El servicio `env_sync`
+monta el `.env` local y añade automáticamente nuevas variables que aparezcan en
+`example.env`, manteniendo intactos los valores existentes.
+
+```bash
+docker compose up -d
+```
+
+El servicio quedará disponible en `http://localhost:8601` y mantendrá los datos en
+los volúmenes `vhs_config` (por ejemplo, para `YTDLP_COOKIES_FILE` en `/config`) y
+`vhs_cache` (cache y logs en `/app/data`). Un contenedor `watchtower` se encarga de
+actualizar solo el servicio `vhs` cuando aparezcan nuevas imágenes.
+
 ## Integración continua
 
 Un flujo de GitHub Actions construye la imagen Docker en cada pull request y la publica en GHCR (`ghcr.io/<owner>/vhs`) al

@@ -1,0 +1,45 @@
+version: "3.9"
+
+services:
+  vhs:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ghcr.io/successbyfailure/vhs:latest
+    container_name: vhs
+    env_file:
+      - .env
+    environment:
+      CACHE_DIR: ${CACHE_DIR:-/app/data/cache}
+      USAGE_LOG_PATH: ${USAGE_LOG_PATH:-/app/data/usage_log.jsonl}
+      YTDLP_COOKIES_FILE: ${YTDLP_COOKIES_FILE:-/config/cookies.txt}
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+      - "com.centurylinklabs.watchtower.scope=vhs"
+    ports:
+      - "8601:8601"
+    volumes:
+      - vhs_config:/config
+      - vhs_cache:/app/data
+    restart: unless-stopped
+
+  env_sync:
+    image: ghcr.io/successbyfailure/vhs:latest
+    command: >-
+      python /app/scripts/update_env_from_example.py
+    volumes:
+      - ./.env:/app/.env
+    depends_on:
+      - vhs
+
+  watchtower:
+    image: containrrr/watchtower:latest
+    command: >-
+      --cleanup --interval 300 --scope vhs --label-enable
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
+
+volumes:
+  vhs_config:
+  vhs_cache:
