@@ -19,8 +19,8 @@ services:
     ports:
       - "8601:8601"
     volumes:
-      - vhs_config:/config
-      - vhs_cache:/app/data
+      - ./config:/config
+      - ./data:/app/data
     logging:
       driver: "json-file"
       options:
@@ -51,7 +51,3 @@ services:
       options:
         max-size: "2m"
     restart: unless-stopped
-
-volumes:
-  vhs_config:
-  vhs_cache:
