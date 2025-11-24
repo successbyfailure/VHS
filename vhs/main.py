@@ -469,6 +469,20 @@ def record_download_event(
         handle.write(json.dumps(event, ensure_ascii=False) + "\n")
 
 
+def record_error_event(error_type: str, source: str = "api") -> None:
+    """Registrar un evento de error para estadísticas de uso."""
+
+    normalized_source = source if source in {"api", "web"} else "other"
+    event = {
+        "timestamp": time.time(),
+        "category": "error",
+        "error_type": error_type,
+        "source": normalized_source,
+    }
+    with USAGE_LOG_PATH.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(event, ensure_ascii=False) + "\n")
+
+
 def summarize_usage(days: int = 7) -> Dict[str, Any]:
     if not USAGE_LOG_PATH.exists():
         points = []
@@ -496,6 +510,7 @@ def summarize_usage(days: int = 7) -> Dict[str, Any]:
             "token_count": 0,
             "recodings": 0,
             "transcriptions": 0,
+            "errors": 0,
         }
 
     total_downloads = 0
@@ -507,6 +522,7 @@ def summarize_usage(days: int = 7) -> Dict[str, Any]:
     total_token_count = 0
     total_recodings = 0
     total_transcriptions = 0
+    total_errors = 0
     format_totals: Dict[str, int] = {}
     for event in points:
         timestamp = event.get("timestamp")
@@ -518,8 +534,12 @@ def summarize_usage(days: int = 7) -> Dict[str, Any]:
         day_key = event_dt.date().isoformat()
         if day_key not in aggregates:
             continue
-        aggregates[day_key]["downloads"] += 1
         source = event.get("source") or "api"
+        if event.get("category") == "error":
+            aggregates[day_key]["errors"] += 1
+            total_errors += 1
+            continue
+        aggregates[day_key]["downloads"] += 1
         if source == "web":
             aggregates[day_key]["web_downloads"] += 1
             total_web_downloads += 1
@@ -568,6 +588,7 @@ def summarize_usage(days: int = 7) -> Dict[str, Any]:
         "total_tokens": total_token_count,
         "ffmpeg_runs": total_recodings,
         "transcriptions": total_transcriptions,
+        "errors": total_errors,
         "unique_formats": len(format_totals),
         "top_formats": [
             {"media_format": name, "count": count} for name, count in top_formats
@@ -1330,23 +1351,31 @@ async def health() -> Dict[str, str]:
 
 @app.get("/api/probe", response_class=JSONResponse)
 async def probe_endpoint(
+    request: Request,
     url: str = Query(..., description="URL a inspeccionar sin descargar"),
 ):
     try:
         info = await run_in_threadpool(probe_media, url)
     except DownloadError as exc:
+        await run_in_threadpool(
+            record_error_event, "probe", detect_request_source(request)
+        )
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return info
 
 
 @app.get("/api/search", response_class=JSONResponse)
 async def search_endpoint(
+    request: Request,
     query: str = Query(..., min_length=3, description="Término de búsqueda"),
     limit: int = Query(8, ge=1, le=25, description="Número máximo de resultados"),
 ):
     try:
         items = await run_in_threadpool(search_media, query, limit)
     except DownloadError as exc:
+        await run_in_threadpool(
+            record_error_event, "search", detect_request_source(request)
+        )
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return {"query": query.strip(), "items": items, "services": SUPPORTED_SERVICES}
 
@@ -1385,6 +1414,9 @@ async def download_endpoint(
                 download_media, url, normalized_format
             )
     except DownloadError as exc:
+        await run_in_threadpool(
+            record_error_event, "download", detect_request_source(request)
+        )
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     download_name = build_download_name(
@@ -1533,6 +1565,9 @@ async def ffmpeg_upload(
             convert_uploaded_file_with_ffmpeg, temp_path, format_value
         )
     except DownloadError as exc:
+        await run_in_threadpool(
+            record_error_event, "ffmpeg_upload", detect_request_source(request)
+        )
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     finally:
         cleanup_path(temp_path)
@@ -1585,6 +1620,9 @@ async def transcribe_upload(
             except OSError:
                 pass
     except DownloadError as exc:
+        await run_in_threadpool(
+            record_error_event, "transcription_upload", detect_request_source(request)
+        )
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     finally:
         try:
