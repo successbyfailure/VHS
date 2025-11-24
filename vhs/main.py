@@ -481,9 +481,9 @@ def summarize_usage(days: int = 7) -> Dict[str, Any]:
 
 
 def build_download_name(title: str, file_path: Path, media_format: str) -> str:
-    base = title.strip().lower() or "videorama"
+    base = title.strip().lower() or "vhs"
     safe = re.sub(r"[^a-z0-9\-_.]+", "_", base)
-    safe = re.sub(r"_+", "_", safe).strip("._") or "videorama"
+    safe = re.sub(r"_+", "_", safe).strip("._") or "vhs"
     extension = FORMAT_EXTENSIONS.get(media_format, file_path.suffix or ".bin")
     return f"{safe}{extension}"
 
@@ -1153,7 +1153,7 @@ async def download_endpoint(
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     download_name = build_download_name(
-        metadata.get("title", "videorama"), file_path, normalized_format
+        metadata.get("title", "vhs"), file_path, normalized_format
     )
     media_type = media_type_for_format(normalized_format)
     response = FileResponse(
@@ -1231,7 +1231,7 @@ async def download_cached_entry(request: Request, cache_key: str):
     if not file_path or not metadata:
         raise HTTPException(status_code=404, detail="Entrada de caché no disponible")
 
-    title = metadata.get("title", "videorama")
+    title = metadata.get("title", "vhs")
     media_format = metadata.get("media_format", "video")
     download_name = build_download_name(title, file_path, media_format)
     media_type = media_type_for_format(media_format)

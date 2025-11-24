@@ -30,7 +30,7 @@ uvicorn vhs.main:app --reload --host 0.0.0.0 --port 8601
 
 ## Construcción de la imagen
 
-Para generar una imagen dedicada a VHS sin depender de Videorama:
+Para generar una imagen dedicada a VHS sin depender de repositorios previos:
 
 ```bash
 docker build -t ghcr.io/successbyfailure/vhs:latest -f Dockerfile .
@@ -38,6 +38,11 @@ docker run --env-file .env -p 8601:8601 ghcr.io/successbyfailure/vhs:latest
 ```
 
 El contenedor expone `/api/health`, `/api/probe`, `/api/download`, `/api/cache`, `/api/transcribe/upload` y `/api/ffmpeg/upload`.
+
+## Integración continua
+
+Un flujo de GitHub Actions construye la imagen Docker en cada pull request y la publica en GHCR (`ghcr.io/<owner>/vhs`) al
+hacer push a `main`. Esto garantiza que el servicio pueda desplegarse de forma independiente del repositorio original.
 
 ## Ficheros clave
 
