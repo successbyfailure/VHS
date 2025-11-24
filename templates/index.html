@@ -343,13 +343,15 @@
         <div>
           <label for="format">Formato</label>
           <select name="format" id="format">
-            <option value="video_high" selected>Video alta calidad (MP4)</option>
+            <option value="video_high" selected>Video alta calidad (mejor disponible)</option>
+            <option value="video_med">Video web (MP4 hasta 720p)</option>
             <option value="video_low">Video ligera (MP4 hasta 480p)</option>
-            <option value="audio">Audio (MP3 192 kbps)</option>
-            <option value="audio_low">Audio ligero (MP3 96 kbps)</option>
-            <option value="transcripcion">Transcripción completa (JSON vía OpenAI)</option>
-            <option value="transcripcion_txt">Transcripción (solo texto TXT)</option>
-            <option value="transcripcion_srt">Subtítulos SRT generados desde la transcripción</option>
+            <option value="audio_high">Audio máxima calidad (fuente)</option>
+            <option value="audio_med">Audio equilibrado (MP3 96 kbps)</option>
+            <option value="audio_low">Audio ligero (MP3 48 kbps)</option>
+            <option value="transcript_json">Transcripción completa (JSON)</option>
+            <option value="transcript_text">Transcripción (solo texto TXT)</option>
+            <option value="transcript_srt">Subtítulos SRT generados desde la transcripción</option>
           </select>
         </div>
         <button type="submit">Descargar</button>
@@ -382,9 +384,9 @@
           <div>
             <label for="upload-format">Formato</label>
             <select name="media_format" id="upload-format">
-              <option value="transcripcion_txt" selected>Transcripción (TXT)</option>
-              <option value="transcripcion">Transcripción completa (JSON)</option>
-              <option value="transcripcion_srt">Subtítulos SRT</option>
+              <option value="transcript_text" selected>Transcripción (TXT)</option>
+              <option value="transcript_json">Transcripción completa (JSON)</option>
+              <option value="transcript_srt">Subtítulos SRT</option>
             </select>
           </div>
           <button type="submit">Transcribir archivo</button>
@@ -421,12 +423,16 @@
           <div>
             <label for="ffmpeg-format">Perfil ffmpeg</label>
             <select name="media_format" id="ffmpeg-format">
-              <option value="ffmpeg_audio" selected>ffmpeg_audio · MP3 a 192 kbps</option>
-              <option value="ffmpeg_audio_wav">ffmpeg_audio_wav · WAV sin pérdidas</option>
-              <option value="ffmpeg_1440p">ffmpeg_1440p · Recodifica video a 1440p</option>
-              <option value="ffmpeg_1080p">ffmpeg_1080p · Copia equilibrada a 1080p</option>
+              <option value="ffmpeg_mp3-192" selected>ffmpeg_mp3-192 · MP3 a 192 kbps</option>
+              <option value="ffmpeg_mp3-128">ffmpeg_mp3-128 · MP3 a 128 kbps</option>
+              <option value="ffmpeg_mp3-96">ffmpeg_mp3-96 · MP3 a 96 kbps</option>
+              <option value="ffmpeg_mp3-64">ffmpeg_mp3-64 · MP3 a 64 kbps</option>
+              <option value="ffmpeg_wav">ffmpeg_wav · WAV sin pérdidas</option>
+              <option value="ffmpeg_480p">ffmpeg_480p · Video ligero a 480p</option>
               <option value="ffmpeg_720p">ffmpeg_720p · Video optimizado a 720p</option>
-              <option value="ffmpeg_480p">ffmpeg_480p · Copia ligera a 480p</option>
+              <option value="ffmpeg_1080p">ffmpeg_1080p · Copia equilibrada a 1080p</option>
+              <option value="ffmpeg_1440p">ffmpeg_1440p · Recodifica video a 1440p</option>
+              <option value="ffmpeg_3840p">ffmpeg_3840p · Master 4K</option>
             </select>
           </div>
           <button type="submit">Convertir archivo con ffmpeg</button>
@@ -641,7 +647,7 @@
           const formData = new FormData(formElement);
           const format = String(formData.get('format') || 'video_high');
           const steps =
-            detectTranscription && format.startsWith('transcripcion')
+            detectTranscription && format.startsWith('transcript')
               ? PROGRESS_STEPS.transcription
               : PROGRESS_STEPS.default;
           tracker.reset();
@@ -670,7 +676,7 @@
         }
         const formData = new FormData();
         formData.append('file', ffmpegFileInput.files[0]);
-        formData.append('media_format', ffmpegFormatSelect?.value || 'ffmpeg_audio');
+        formData.append('media_format', ffmpegFormatSelect?.value || 'ffmpeg_mp3-192');
         ffmpegProgress.reset();
         ffmpegProgress.start(PROGRESS_STEPS.ffmpeg);
         ffmpegStatusEl.textContent = 'Preparando archivo local…';
@@ -696,7 +702,7 @@
         }
         const formData = new FormData();
         formData.append('file', uploadFileInput.files[0]);
-        formData.append('media_format', uploadFormatSelect?.value || 'transcripcion_txt');
+        formData.append('media_format', uploadFormatSelect?.value || 'transcript_text');
         uploadProgress.reset();
         uploadProgress.start(PROGRESS_STEPS.transcription);
         uploadStatusEl.textContent = 'Preparando archivo local…';
