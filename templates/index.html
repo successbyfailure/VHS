@@ -321,7 +321,7 @@
         </div>
         <p class="hint">
           Las descargas y conversiones se guardan en caché 24h para reutilizar
-          archivos, acelerar el bot de Telegram y alimentar la biblioteca de Videorama.
+          archivos, acelerar bots o integraciones y alimentar bibliotecas externas.
         </p>
         <div class="hero-actions">
           <a class="ghost-button" href="/docs/api">API docs</a>
@@ -607,7 +607,7 @@
           const blob = await response.blob();
           progress?.advance('Listando archivo para descarga…');
           const disposition = response.headers.get('Content-Disposition');
-          let filename = 'videorama-download';
+          let filename = 'vhs-download';
           if (disposition && disposition.includes('filename=')) {
             filename = disposition.split('filename=')[1].replace(/"/g, '');
           }

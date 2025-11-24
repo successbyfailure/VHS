@@ -1,0 +1,27 @@
+# Python artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.dylib
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.cache/
+
+# Environments
+.venv/
+.env
+.env.*
+
+data/
+
+# Editors/OS
+.DS_Store
+.idea/
+.vscode/

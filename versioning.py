@@ -1,4 +1,4 @@
-"""Carga y acceso centralizado a las versiones de Videorama y servicios asociados."""
+"""Carga y acceso centralizado a las versiones de VHS y servicios asociados."""
 
 from __future__ import annotations
 
@@ -12,8 +12,10 @@ from typing import Dict
 logger = logging.getLogger(__name__)
 
 VERSION_FILE = Path(
-    os.getenv("SERVICE_VERSION_FILE")
-    or os.getenv("VIDEORAMA_VERSION_FILE", "versions.json")
+    os.getenv("VHS_VERSION_FILE")
+    or os.getenv("SERVICE_VERSION_FILE")
+    or os.getenv("VIDEORAMA_VERSION_FILE")
+    or "versions.json"
 )
 
 
