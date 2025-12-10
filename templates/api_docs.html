@@ -137,6 +137,10 @@
         </dl>
         <pre><code>curl -L "${BASE_URL:-http://localhost:8601}/api/download?url=https://youtu.be/&amp;format=audio" \
   -o audio.mp3</code></pre>
+        <p>
+          Si el formato es <code>transcript_json</code>, <code>transcript_text</code> o <code>transcript_srt</code>,
+          añade <code>diarization=true</code> para incluir etiquetas de hablante (requiere whisper-asr configurado).
+        </p>
       </section>
       <section>
         <h2>Operaciones con ffmpeg</h2>
@@ -171,6 +175,10 @@
   -F "media_format=transcript_srt" \
   -F "file=@/ruta/al/audio.mp4" \
   -o subtitulos.srt</code></pre>
+        <p>
+          Puedes añadir <code>-F "diarization=true"</code> para propagar la diarización a whisper-asr y recibir
+          segmentos etiquetados por hablante.
+        </p>
         <p>Los formatos válidos son <code>transcript_json</code>, <code>transcript_text</code> y <code>transcript_srt</code>.</p>
       </section>
       <section>

@@ -18,6 +18,7 @@ Transcripciones:
 - `transcript_json`: salida JSON completa con segmentos y marcas de tiempo.
 - `transcript_text`: solo el texto plano consolidado.
 - `transcript_srt`: archivo SRT listo para reproductores.
+- Añade `diarization=true` al solicitar `transcript_*` para incluir etiquetas de hablante (requiere `WHISPER_ASR_URL` apuntando a whisper-asr).
 
 ## Perfiles ffmpeg y transcripción local
 
@@ -36,6 +37,7 @@ Los endpoints de conversión y transcripción aceptan los siguientes formatos:
 - Acepta cualquiera de los formatos listados arriba (video/audio/ffmpeg/transcripción).
 - Guarda metadatos en caché con resolución (`width`, `height`), bitrates (`video_bitrate_kbps`, `audio_bitrate_kbps`), identificador de formato (`format_id`) y tamaño (`filesize_bytes`).
 - Si la descarga ya existe en caché y no ha expirado, se reutiliza.
+- Para transcripciones (`transcript_*`) puedes añadir `diarization=true` para que whisper-asr devuelva segmentos con locutor identificado.
 
 ### Recodificar un archivo local con ffmpeg
 `POST /api/ffmpeg/upload`
@@ -47,6 +49,7 @@ Los endpoints de conversión y transcripción aceptan los siguientes formatos:
 `POST /api/transcribe/upload`
 
 - `multipart/form-data` con campos `file` y `media_format` (`transcript_json`, `transcript_text` o `transcript_srt`).
+- Campo opcional `diarization=true` para propagar la diarización a whisper-asr.
 - Usa el mismo pipeline de transcripción que el importador remoto y devuelve texto, JSON o SRT según se solicite.
 
 ### Inspeccionar sin descargar

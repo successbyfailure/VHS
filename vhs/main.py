@@ -887,17 +887,23 @@ def download_media(url: str, media_format: str) -> Tuple[Path, Dict]:
 
 def run_ffmpeg(source: Path, destination: Path, args: List[str]) -> None:
     command = [FFMPEG_BINARY, "-y", "-i", str(source), *args, str(destination)]
-    process = subprocess.run(
-        command,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-        text=True,
-    )
-    if process.returncode != 0:
-        raise DownloadError(
-            "ffmpeg no pudo procesar el archivo: " + (process.stderr or process.stdout)
+    try:
+        process = subprocess.run(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            text=True,
         )
+    except FileNotFoundError as exc:
+        raise DownloadError(
+            "ffmpeg no está instalado o no es accesible en el sistema"
+        ) from exc
+
+    if process.returncode != 0:
+        message = (process.stderr or process.stdout or "").strip()
+        tail = message.splitlines()[-1] if message else "error desconocido de ffmpeg"
+        raise DownloadError(f"ffmpeg no pudo procesar el archivo: {tail}")
 
 
 def process_with_ffmpeg(url: str, media_format: str) -> Tuple[Path, Dict]:
@@ -1065,7 +1071,42 @@ def _normalize_transcription_payload(payload: Any) -> Dict[str, Any]:
     text_field = data.get("text")
     if isinstance(text_field, str):
         data["text"] = text_field.strip()
+    diarization_blob = data.get("diarization")
+    if "segments" not in data:
+        if isinstance(diarization_blob, dict) and diarization_blob.get("segments"):
+            data["segments"] = diarization_blob["segments"]
+        elif isinstance(diarization_blob, list):
+            data["segments"] = diarization_blob
     return data
+
+
+def _coerce_segments(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+    segments = payload.get("segments") or []
+    if isinstance(segments, dict):
+        segments = list(segments.values())
+    return segments if isinstance(segments, list) else []
+
+
+def _segment_text(segment: Dict[str, Any]) -> str:
+    text_value = (
+        segment.get("text")
+        or segment.get("transcript")
+        or segment.get("caption")
+        or ""
+    )
+    return text_value if isinstance(text_value, str) else str(text_value)
+
+
+def _segment_speaker(segment: Dict[str, Any]) -> str:
+    raw_speaker = segment.get("speaker")
+    if raw_speaker is None:
+        return ""
+    label = str(raw_speaker).strip()
+    return f"{label}: " if label else ""
+
+
+def _segments_have_speakers(segments: List[Dict[str, Any]]) -> bool:
+    return any(bool(_segment_speaker(segment)) for segment in segments)
 
 
 def _format_srt_timestamp(seconds: float) -> str:
@@ -1077,9 +1118,7 @@ def _format_srt_timestamp(seconds: float) -> str:
 
 
 def transcription_payload_to_srt(payload: Dict[str, Any]) -> str:
-    segments = payload.get("segments") or []
-    if isinstance(segments, dict):
-        segments = list(segments.values())
+    segments = _coerce_segments(payload)
     if not isinstance(segments, list) or not segments:
         text_value = payload.get("text") or ""
         text_str = text_value.strip() if isinstance(text_value, str) else str(text_value)
@@ -1089,22 +1128,25 @@ def transcription_payload_to_srt(payload: Dict[str, Any]) -> str:
     for index, segment in enumerate(segments, start=1):
         start = segment.get("start")
         end = segment.get("end")
-        text_value = (
-            segment.get("text")
-            or segment.get("transcript")
-            or segment.get("caption")
-            or ""
-        )
-        if not isinstance(text_value, str):
-            text_value = str(text_value)
+        text_value = _segment_text(segment)
         start_ts = _format_srt_timestamp(float(start or 0))
         end_ts = _format_srt_timestamp(float(end or start or 0))
-        cleaned = text_value.strip()
+        speaker_prefix = _segment_speaker(segment)
+        cleaned = f"{speaker_prefix}{text_value.strip()}"
         entries.append(f"{index}\n{start_ts} --> {end_ts}\n{cleaned}\n")
     return "\n".join(entries).strip() + "\n"
 
 
 def _transcription_text_only(payload: Dict[str, Any]) -> str:
+    segments = _coerce_segments(payload)
+    if segments and _segments_have_speakers(segments):
+        lines: List[str] = []
+        for segment in segments:
+            prefix = _segment_speaker(segment) or "Locutor: "
+            text_value = _segment_text(segment).strip()
+            lines.append(f"{prefix}{text_value}".strip())
+        return "\n".join(lines).strip()
+
     text_only = payload.get("text") or ""
     if not isinstance(text_only, str):
         text_only = str(text_only)
@@ -1169,15 +1211,36 @@ def convert_uploaded_file_with_ffmpeg(source_path: Path, media_format: str) -> P
         raise DownloadError("Perfil ffmpeg no soportado")
     if not source_path.exists():
         raise DownloadError("El archivo subido no está disponible para su procesamiento")
+    try:
+        if source_path.stat().st_size == 0:
+            raise DownloadError("El archivo subido está vacío o corrupto")
+    except OSError:
+        pass
     with tempfile.NamedTemporaryFile(delete=False, suffix=preset["extension"]) as tmp:
         output_path = Path(tmp.name)
-    run_ffmpeg(source_path, output_path, preset["args"])
+    try:
+        run_ffmpeg(source_path, output_path, preset["args"])
+    except Exception:
+        output_path.unlink(missing_ok=True)
+        raise
+    try:
+        if output_path.stat().st_size == 0:
+            output_path.unlink(missing_ok=True)
+            raise DownloadError("ffmpeg no generó salida. Revisa el archivo de entrada.")
+    except OSError:
+        output_path.unlink(missing_ok=True)
+        raise DownloadError("ffmpeg no pudo preparar el archivo de salida")
     return output_path
 
 
 def extract_audio_profile_from_file(source_path: Path, profile_key: str = "audio_med") -> Path:
     if not source_path.exists():
         raise DownloadError("El archivo subido no está disponible para su procesamiento")
+    try:
+        if source_path.stat().st_size == 0:
+            raise DownloadError("El archivo subido está vacío o corrupto")
+    except OSError:
+        pass
 
     profile = AUDIO_FORMAT_PROFILES.get(profile_key) or AUDIO_FORMAT_PROFILES["audio_med"]
     suffix = f".{profile.get('codec', 'mp3')}"
@@ -1218,15 +1281,18 @@ def _call_openai_transcription(file_path: Path) -> Dict[str, Any]:
     return _normalize_transcription_payload(response)
 
 
-def _call_whisper_asr(file_path: Path) -> Dict[str, Any]:
+def _call_whisper_asr(file_path: Path, diarization: bool = False) -> Dict[str, Any]:
     if not WHISPER_ASR_URL:
         raise DownloadError("Servicio whisper-asr no configurado")
     base = WHISPER_ASR_URL.rstrip("/")
     endpoint = f"{base}/asr"
+    params = {"output": "json", "task": "transcribe"}
+    if diarization:
+        params["diarization"] = "true"
     with file_path.open("rb") as audio_stream:
         response = requests.post(
             endpoint,
-            params={"output": "json", "task": "transcribe"},
+            params=params,
             files={"audio_file": (file_path.name, audio_stream, "application/octet-stream")},
             timeout=WHISPER_ASR_TIMEOUT,
         )
@@ -1241,15 +1307,19 @@ def _call_whisper_asr(file_path: Path) -> Dict[str, Any]:
     return _normalize_transcription_payload(payload)
 
 
-def transcribe_audio_file(file_path: Path) -> Dict[str, Any]:
+def transcribe_audio_file(file_path: Path, diarization: bool = False) -> Dict[str, Any]:
     ensure_transcription_ready()
     Attempt = Tuple[str, Callable[[], Dict[str, Any]]]
     attempts: List[Attempt] = []
 
+    diarization_requested = bool(diarization)
+    if diarization_requested and WHISPER_ASR_URL:
+        attempts.append(("whisper-asr", lambda: _call_whisper_asr(file_path, diarization=True)))
+
     if TRANSCRIPTION_API_KEY and TRANSCRIPTION_MODEL:
         attempts.append(("openai", lambda: _call_openai_transcription(file_path)))
 
-    if WHISPER_ASR_URL:
+    if WHISPER_ASR_URL and not diarization_requested:
         attempts.append(("whisper-asr", lambda: _call_whisper_asr(file_path)))
 
     errors: List[str] = []
@@ -1263,17 +1333,20 @@ def transcribe_audio_file(file_path: Path) -> Dict[str, Any]:
     raise DownloadError(f"No se pudo transcribir el audio: {joined or 'error desconocido'}")
 
 
-def generate_transcription_file(url: str, media_format: str) -> Tuple[Path, Dict]:
+def generate_transcription_file(
+    url: str, media_format: str, diarization: bool = False
+) -> Tuple[Path, Dict]:
     if media_format not in TRANSCRIPTION_FORMATS:
         raise DownloadError("Formato de transcripción no soportado")
-    key = cache_key(url, media_format)
+    diarization_suffix = f"diarization={int(bool(diarization))}"
+    key = cache_key(f"{url}::{diarization_suffix}", media_format)
     purge_expired_entries()
     cached_path, cached_meta = fetch_cached_file(key)
     if cached_path:
         return cached_path, cached_meta or {}
 
     audio_path, audio_meta = download_media(url, "audio_med")
-    transcript_payload = transcribe_audio_file(audio_path)
+    transcript_payload = transcribe_audio_file(audio_path, diarization=diarization)
     transcription_stats = estimate_transcription_stats(transcript_payload)
 
     if media_format == "transcript_json":
@@ -1301,6 +1374,7 @@ def generate_transcription_file(url: str, media_format: str) -> Tuple[Path, Dict
         "downloaded_at": time.time(),
         "cache_key": key,
         "transcription_stats": transcription_stats,
+        "diarization": bool(diarization),
     }
     metadata.update(
         {
@@ -1387,6 +1461,10 @@ async def download_endpoint(
     media_format: str = Query(
         DEFAULT_VIDEO_FORMAT, pattern=MEDIA_FORMAT_PATTERN, alias="format"
     ),
+    diarization: bool = Query(
+        False,
+        description="Activa la diarización (solo whisper-asr)",
+    ),
 ):
     format_value = media_format.lower()
     if format_value not in SUPPORTED_MEDIA_FORMATS:
@@ -1403,7 +1481,7 @@ async def download_endpoint(
     try:
         if normalized_format in TRANSCRIPTION_FORMATS:
             file_path, metadata = await run_in_threadpool(
-                generate_transcription_file, url, normalized_format
+                generate_transcription_file, url, normalized_format, diarization
             )
         elif normalized_format in FFMPEG_PRESETS:
             file_path, metadata = await run_in_threadpool(
@@ -1594,6 +1672,7 @@ async def ffmpeg_upload(
 async def transcribe_upload(
     request: Request,
     media_format: str = Form("transcript_text"),
+    diarization: bool = Form(False),
     file: UploadFile = File(...),
 ):
     format_value = media_format.lower()
@@ -1613,7 +1692,9 @@ async def transcribe_upload(
             extract_audio_profile_from_file, temp_path, "audio_med"
         )
         try:
-            payload = await run_in_threadpool(transcribe_audio_file, audio_path)
+            payload = await run_in_threadpool(
+                transcribe_audio_file, audio_path, diarization
+            )
         finally:
             try:
                 audio_path.unlink(missing_ok=True)
@@ -1647,4 +1728,3 @@ async def transcribe_upload(
         detect_request_source(request),
     )
     return response
-
