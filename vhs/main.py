@@ -282,6 +282,12 @@ TRANSCRIPTION_FORMATS = {
     "transcript_text",
     "transcript_srt",
     "transcript_diarized_json",
+    "transcript_diarized_text",
+    "transcript_translate_json",
+    "transcript_translate_text",
+    "transcript_translate_srt",
+    "transcript_translate_diarized_json",
+    "transcript_translate_diarized_text",
 }
 SUPPORTED_MEDIA_FORMATS = {
     *VIDEO_FORMAT_PROFILES,
@@ -293,7 +299,18 @@ SUPPORTED_MEDIA_FORMATS = {
 MEDIA_FORMAT_PATTERN = f"^({'|'.join(sorted(SUPPORTED_MEDIA_FORMATS))})$"
 
 def is_diarization_format(media_format: str) -> bool:
-    return normalize_media_format(media_format) == "transcript_diarized_json"
+    normalized = normalize_media_format(media_format)
+    return normalized in {
+        "transcript_diarized_json",
+        "transcript_diarized_text",
+        "transcript_translate_diarized_json",
+        "transcript_translate_diarized_text",
+    }
+
+
+def is_translation_format(media_format: str) -> bool:
+    normalized = normalize_media_format(media_format)
+    return normalized.startswith("transcript_translate")
 
 FORMAT_DESCRIPTIONS: List[Dict[str, str]] = [
     {
@@ -339,6 +356,30 @@ FORMAT_DESCRIPTIONS: List[Dict[str, str]] = [
     {
         "name": "transcript_diarized_json",
         "description": "Transcripción JSON con etiquetas de hablante (whisper-asr)",
+    },
+    {
+        "name": "transcript_diarized_text",
+        "description": "Transcripción TXT con etiquetas de hablante (whisper-asr)",
+    },
+    {
+        "name": "transcript_translate_json",
+        "description": "Traducción al español en JSON (whisper-asr)",
+    },
+    {
+        "name": "transcript_translate_text",
+        "description": "Traducción al español en TXT (whisper-asr)",
+    },
+    {
+        "name": "transcript_translate_srt",
+        "description": "Traducción al español en SRT (whisper-asr)",
+    },
+    {
+        "name": "transcript_translate_diarized_json",
+        "description": "Traducción al español con etiquetas de hablante en JSON (whisper-asr)",
+    },
+    {
+        "name": "transcript_translate_diarized_text",
+        "description": "Traducción al español con etiquetas de hablante en TXT (whisper-asr)",
     },
 ]
 
@@ -401,6 +442,12 @@ FORMAT_EXTENSIONS = {
     "transcript_text": ".txt",
     "transcript_srt": ".srt",
     "transcript_diarized_json": ".json",
+    "transcript_diarized_text": ".txt",
+    "transcript_translate_json": ".json",
+    "transcript_translate_text": ".txt",
+    "transcript_translate_srt": ".srt",
+    "transcript_translate_diarized_json": ".json",
+    "transcript_translate_diarized_text": ".txt",
 }
 
 for preset_name, preset in FFMPEG_PRESETS.items():
@@ -411,7 +458,11 @@ TRANSCRIPTION_FILE_SUFFIX = ".transcript.json"
 
 def media_type_for_format(media_format: str) -> str:
     normalized = normalize_media_format(media_format)
-    if normalized == "transcript_diarized_json":
+    if normalized in {
+        "transcript_diarized_json",
+        "transcript_translate_json",
+        "transcript_translate_diarized_json",
+    }:
         return "application/json"
     if normalized == "transcript_json":
         return "application/json"
@@ -464,8 +515,14 @@ def record_download_event(
     cache_hit: bool,
     transcription_stats: Optional[Dict[str, Any]] = None,
     source: str = "api",
+    *,
+    size_bytes: Optional[int] = None,
+    processing_ms: Optional[float] = None,
+    provider: Optional[str] = None,
+    translation: bool = False,
+    diarization: bool = False,
 ) -> None:
-    event = {
+    event: Dict[str, Any] = {
         "timestamp": time.time(),
         "media_format": media_format,
         "cache_hit": bool(cache_hit),
@@ -480,6 +537,16 @@ def record_download_event(
             event["word_count"] = int(word_count)
         if isinstance(token_count, (int, float)):
             event["token_count"] = int(token_count)
+    if size_bytes is not None:
+        event["size_bytes"] = int(size_bytes)
+    if processing_ms is not None:
+        event["processing_ms"] = float(processing_ms)
+    if provider:
+        event["provider"] = provider
+    if translation:
+        event["translation"] = True
+    if diarization:
+        event["diarization"] = True
     with USAGE_LOG_PATH.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(event, ensure_ascii=False) + "\n")
 
@@ -526,6 +593,11 @@ def summarize_usage(days: int = 7) -> Dict[str, Any]:
             "recodings": 0,
             "transcriptions": 0,
             "errors": 0,
+            "translations": 0,
+            "diarized": 0,
+            "bytes": 0,
+            "cache_bytes_saved": 0,
+            "processing_ms": [],
         }
 
     total_downloads = 0
@@ -538,7 +610,14 @@ def summarize_usage(days: int = 7) -> Dict[str, Any]:
     total_recodings = 0
     total_transcriptions = 0
     total_errors = 0
+    total_translations = 0
+    total_diarized = 0
+    total_bytes = 0
+    total_cache_bytes_saved = 0
     format_totals: Dict[str, int] = {}
+    provider_counts: Dict[str, int] = {}
+    error_counts: Dict[str, int] = {}
+    processing_all: List[float] = []
     for event in points:
         timestamp = event.get("timestamp")
         if timestamp is None:
@@ -553,6 +632,8 @@ def summarize_usage(days: int = 7) -> Dict[str, Any]:
         if event.get("category") == "error":
             aggregates[day_key]["errors"] += 1
             total_errors += 1
+            err_type = event.get("error_type") or "desconocido"
+            error_counts[err_type] = error_counts.get(err_type, 0) + 1
             continue
         aggregates[day_key]["downloads"] += 1
         if source == "web":
@@ -585,13 +666,48 @@ def summarize_usage(days: int = 7) -> Dict[str, Any]:
         if category == "transcription":
             aggregates[day_key]["transcriptions"] += 1
             total_transcriptions += 1
+            if event.get("translation"):
+                aggregates[day_key]["translations"] += 1
+                total_translations += 1
+            if event.get("diarization"):
+                aggregates[day_key]["diarized"] += 1
+                total_diarized += 1
+        size_bytes = event.get("size_bytes")
+        if isinstance(size_bytes, (int, float)):
+            aggregates[day_key]["bytes"] += int(size_bytes)
+            total_bytes += int(size_bytes)
+            if event.get("cache_hit"):
+                aggregates[day_key]["cache_bytes_saved"] += int(size_bytes)
+                total_cache_bytes_saved += int(size_bytes)
+        proc = event.get("processing_ms")
+        if isinstance(proc, (int, float)):
+            aggregates[day_key]["processing_ms"].append(float(proc))
+        provider = event.get("provider")
+        if provider:
+            provider_counts[provider] = provider_counts.get(provider, 0) + 1
 
     series = [
         {"date": day, **aggregates[day]} for day in sorted(aggregates.keys())
     ]
+    for day_entry in series:
+        proc_list = day_entry.pop("processing_ms", [])
+        if proc_list:
+            proc_list_sorted = sorted(proc_list)
+            processing_all.extend(proc_list_sorted)
+            day_entry["processing_avg_ms"] = sum(proc_list_sorted) / len(proc_list_sorted)
+            idx = max(0, int(len(proc_list_sorted) * 0.95) - 1)
+            day_entry["processing_p95_ms"] = proc_list_sorted[idx]
+        else:
+            day_entry["processing_avg_ms"] = 0.0
+            day_entry["processing_p95_ms"] = 0.0
     top_formats = sorted(
         format_totals.items(), key=lambda item: item[1], reverse=True
     )[:3]
+    processing_summary = {"average_ms": 0.0, "p95_ms": 0.0}
+    if processing_all:
+        processing_all.sort()
+        processing_summary["average_ms"] = sum(processing_all) / len(processing_all)
+        processing_summary["p95_ms"] = processing_all[max(0, int(len(processing_all) * 0.95) - 1)]
     return {
         "points": series,
         "total": total_downloads,
@@ -603,10 +719,20 @@ def summarize_usage(days: int = 7) -> Dict[str, Any]:
         "total_tokens": total_token_count,
         "ffmpeg_runs": total_recodings,
         "transcriptions": total_transcriptions,
+        "translations": total_translations,
+        "diarized": total_diarized,
+        "bytes_served": total_bytes,
+        "cache_bytes_saved": total_cache_bytes_saved,
+        "processing": processing_summary,
+        "providers": provider_counts,
         "errors": total_errors,
         "unique_formats": len(format_totals),
         "top_formats": [
             {"media_format": name, "count": count} for name, count in top_formats
+        ],
+        "top_errors": [
+            {"error_type": name, "count": count}
+            for name, count in sorted(error_counts.items(), key=lambda x: x[1], reverse=True)[:3]
         ],
         "days": days,
     }
@@ -1086,6 +1212,13 @@ def _normalize_transcription_payload(payload: Any) -> Dict[str, Any]:
     text_field = data.get("text")
     if isinstance(text_field, str):
         data["text"] = text_field.strip()
+        if "segments" not in data:
+            try:
+                parsed_text = json.loads(text_field)
+                if isinstance(parsed_text, dict) and parsed_text.get("segments"):
+                    data.update(parsed_text)
+            except Exception:
+                pass
     diarization_blob = data.get("diarization")
     if "segments" not in data:
         if isinstance(diarization_blob, dict) and diarization_blob.get("segments"):
@@ -1093,6 +1226,64 @@ def _normalize_transcription_payload(payload: Any) -> Dict[str, Any]:
         elif isinstance(diarization_blob, list):
             data["segments"] = diarization_blob
     return data
+
+
+def _translate_texts_to_spanish(texts: List[str]) -> List[str]:
+    if not TRANSCRIPTION_API_KEY:
+        raise DownloadError("La traducción requiere configurar TRANSCRIPTION_API_KEY")
+    model = TRANSLATION_MODEL or TRANSCRIPTION_MODEL
+    if not model or model.startswith("whisper"):
+        raise DownloadError(
+            "Configura TRANSLATION_MODEL con un modelo de chat válido para traducir al español"
+        )
+    client = OpenAI(api_key=TRANSCRIPTION_API_KEY, base_url=TRANSCRIPTION_ENDPOINT)
+    results: List[str] = []
+    for text in texts:
+        completion = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": "Traduce el siguiente texto al español. Devuelve solo el texto traducido."},
+                {"role": "user", "content": str(text)},
+            ],
+            temperature=0,
+        )
+        translated = (completion.choices[0].message.content or "").strip()
+        if not translated:
+            raise DownloadError("La traducción devolvió un texto vacío")
+        results.append(translated)
+    return results
+
+
+def translate_transcription_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    segments = payload.get("segments")
+    if isinstance(segments, dict):
+        seg_list = list(segments.values())
+    else:
+        seg_list = segments if isinstance(segments, list) else []
+
+    if seg_list:
+        texts = []
+        for segment in seg_list:
+            text_value = (
+                segment.get("text")
+                or segment.get("transcript")
+                or segment.get("caption")
+                or ""
+            )
+            texts.append(text_value if isinstance(text_value, str) else str(text_value))
+        translations = _translate_texts_to_spanish(texts)
+        for segment, translated in zip(seg_list, translations):
+            segment["text"] = translated
+        payload["segments"] = seg_list
+        payload["text"] = " ".join(translations).strip()
+        return payload
+
+    text_only = payload.get("text") or ""
+    if not isinstance(text_only, str):
+        text_only = str(text_only)
+    translated = _translate_texts_to_spanish([text_only])[0]
+    payload["text"] = translated.strip()
+    return payload
 
 
 def _coerce_segments(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -1187,9 +1378,16 @@ def estimate_transcription_stats(payload: Dict[str, Any]) -> Dict[str, int]:
 
 def render_transcription_payload(payload: Dict[str, Any], media_format: str) -> bytes:
     normalized = normalize_media_format(media_format)
-    if normalized in {"transcript_json", "transcript_diarized_json"}:
+    if normalized in {
+        "transcript_json",
+        "transcript_diarized_json",
+        "transcript_translate_json",
+        "transcript_translate_diarized_json",
+    }:
         text = json.dumps(payload, ensure_ascii=False, indent=2)
     elif normalized == "transcript_srt":
+        text = transcription_payload_to_srt(payload)
+    elif normalized == "transcript_translate_srt":
         text = transcription_payload_to_srt(payload)
     else:
         text = _transcription_text_only(payload)
@@ -1297,46 +1495,77 @@ def _call_openai_transcription(file_path: Path) -> Dict[str, Any]:
     return _normalize_transcription_payload(response)
 
 
-def _call_whisper_asr(file_path: Path, diarization: bool = False) -> Dict[str, Any]:
+def _whisper_asr_request_params(media_format: str) -> Dict[str, Any]:
+    normalized = normalize_media_format(media_format)
+    diarization = is_diarization_format(normalized)
+    translation = is_translation_format(normalized)
+    task = "transcribe"
+    output = "json"
+    if normalized in {"transcript_srt", "transcript_translate_srt"}:
+        output = "srt"
+    elif normalized in {
+        "transcript_text",
+        "transcript_diarized_text",
+        "transcript_translate_text",
+        "transcript_translate_diarized_text",
+    }:
+        output = "txt"
+    params = {"output": output, "task": task, "encode": "true"}
+    if diarization:
+        params["diarize"] = "true"
+        params["min_speakers"] = "2"
+    return params
+
+
+def _call_whisper_asr(file_path: Path, media_format: str) -> Dict[str, Any]:
     if not WHISPER_ASR_URL:
         raise DownloadError("Servicio whisper-asr no configurado")
     base = WHISPER_ASR_URL.rstrip("/")
     endpoint = f"{base}/asr"
-    params = {"output": "json", "task": "transcribe"}
-    if diarization:
-        params["diarization"] = "true"
+    params = _whisper_asr_request_params(media_format)
+    mime_type = "audio/mpeg" if file_path.suffix.lower() in {".mp3", ".mpeg"} else "application/octet-stream"
     with file_path.open("rb") as audio_stream:
         response = requests.post(
             endpoint,
             params=params,
-            files={"audio_file": (file_path.name, audio_stream, "application/octet-stream")},
+            files={"audio_file": (file_path.name, audio_stream, mime_type)},
             timeout=WHISPER_ASR_TIMEOUT,
         )
     if response.status_code >= 400:
         raise DownloadError(
             f"whisper-asr respondió con un error HTTP {response.status_code}: {response.text.strip()}"
         )
-    try:
-        payload = response.json()
-    except ValueError as exc:  # pragma: no cover - depends on remote service
-        raise DownloadError("whisper-asr devolvió un JSON inválido") from exc
+    content_type = response.headers.get("content-type", "").lower()
+    if "application/json" in content_type:
+        try:
+            payload = response.json()
+        except ValueError as exc:  # pragma: no cover - depends on remote service
+            raise DownloadError("whisper-asr devolvió un JSON inválido") from exc
+    else:
+        text_content = response.text
+        payload = {"text": text_content.strip()}
     return _normalize_transcription_payload(payload)
 
 
-def transcribe_audio_file(file_path: Path, diarization: bool = False) -> Dict[str, Any]:
+def transcribe_audio_file(file_path: Path, media_format: str) -> Dict[str, Any]:
     ensure_transcription_ready()
     Attempt = Tuple[str, Callable[[], Dict[str, Any]]]
     attempts: List[Attempt] = []
 
-    diarization_requested = bool(diarization)
-    if diarization_requested and WHISPER_ASR_URL:
-        attempts.append(("whisper-asr", lambda: _call_whisper_asr(file_path, diarization=True)))
+    normalized_format = normalize_media_format(media_format)
+    translation = is_translation_format(normalized_format)
+    diarization = is_diarization_format(normalized_format)
 
-    if TRANSCRIPTION_API_KEY and TRANSCRIPTION_MODEL:
-        attempts.append(("openai", lambda: _call_openai_transcription(file_path)))
+    if (translation or diarization) and not WHISPER_ASR_URL:
+        raise DownloadError("La diarización y la traducción requieren configurar WHISPER_ASR_URL")
 
-    if WHISPER_ASR_URL and not diarization_requested:
-        attempts.append(("whisper-asr", lambda: _call_whisper_asr(file_path)))
+    if translation or diarization:
+        attempts.append(("whisper-asr", lambda: _call_whisper_asr(file_path, media_format)))
+    else:
+        if TRANSCRIPTION_API_KEY and TRANSCRIPTION_MODEL:
+            attempts.append(("openai", lambda: _call_openai_transcription(file_path)))
+        if WHISPER_ASR_URL:
+            attempts.append(("whisper-asr", lambda: _call_whisper_asr(file_path, media_format)))
 
     errors: List[str] = []
     for provider_name, provider_call in attempts:
@@ -1353,17 +1582,21 @@ def generate_transcription_file(url: str, media_format: str) -> Tuple[Path, Dict
     if media_format not in TRANSCRIPTION_FORMATS:
         raise DownloadError("Formato de transcripción no soportado")
     diarization = is_diarization_format(media_format)
-    if diarization and not WHISPER_ASR_URL:
-        raise DownloadError("La diarización requiere configurar WHISPER_ASR_URL apuntando a whisper-asr")
+    translation = is_translation_format(media_format)
+    if (diarization or translation) and not WHISPER_ASR_URL:
+        raise DownloadError("La diarización y la traducción requieren configurar WHISPER_ASR_URL apuntando a whisper-asr")
     diarization_suffix = f"diarization={int(diarization)}"
-    key = cache_key(f"{url}::{diarization_suffix}", media_format)
+    translation_suffix = f"translation={int(translation)}"
+    key = cache_key(f"{url}::{diarization_suffix}::{translation_suffix}", media_format)
     purge_expired_entries()
     cached_path, cached_meta = fetch_cached_file(key)
     if cached_path:
         return cached_path, cached_meta or {}
 
     audio_path, audio_meta = download_media(url, "audio_med")
-    transcript_payload = transcribe_audio_file(audio_path, diarization=diarization)
+    transcript_payload = transcribe_audio_file(audio_path, media_format)
+    if translation:
+        transcript_payload = translate_transcription_payload(transcript_payload)
     transcription_stats = estimate_transcription_stats(transcript_payload)
 
     if media_format == "transcript_json":
@@ -1392,6 +1625,7 @@ def generate_transcription_file(url: str, media_format: str) -> Tuple[Path, Dict
         "cache_key": key,
         "transcription_stats": transcription_stats,
         "diarization": bool(diarization),
+        "translation": bool(translation),
     }
     metadata.update(
         {
@@ -1691,19 +1925,17 @@ async def transcribe_upload(
     if format_value not in TRANSCRIPTION_FORMATS:
         raise HTTPException(
             status_code=400,
-            detail=(
-                "Formato inválido. Usa 'transcript_json', 'transcript_text', "
-                "'transcript_srt' o 'transcript_diarized_json'."
-            ),
+            detail="Formato inválido. Usa un formato transcript_* soportado.",
         )
     if not file.filename:
         raise HTTPException(status_code=400, detail="Incluye un archivo de audio o video")
 
     diarization = is_diarization_format(format_value)
-    if diarization and not WHISPER_ASR_URL:
+    translation = is_translation_format(format_value)
+    if (diarization or translation) and not WHISPER_ASR_URL:
         raise HTTPException(
             status_code=400,
-            detail="La diarización requiere configurar WHISPER_ASR_URL",
+            detail="La diarización y la traducción requieren configurar WHISPER_ASR_URL",
         )
     temp_path = await save_upload_file(file)
     try:
@@ -1712,8 +1944,12 @@ async def transcribe_upload(
         )
         try:
             payload = await run_in_threadpool(
-                transcribe_audio_file, audio_path, diarization
+                transcribe_audio_file, audio_path, format_value
             )
+            if translation:
+                payload = await run_in_threadpool(
+                    translate_transcription_payload, payload
+                )
         finally:
             try:
                 audio_path.unlink(missing_ok=True)
@@ -1747,3 +1983,4 @@ async def transcribe_upload(
         detect_request_source(request),
     )
     return response
+TRANSLATION_MODEL = os.getenv("TRANSLATION_MODEL")

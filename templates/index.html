@@ -279,6 +279,50 @@
       canvas {
         width: 100% !important;
       }
+      .tabs {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 0.5rem;
+        margin: 1rem 0 0.5rem;
+      }
+      .tab-button {
+        padding: 0.75rem 1rem;
+        border-radius: 0.75rem;
+        border: 1px solid rgba(148, 163, 184, 0.4);
+        background: rgba(255, 255, 255, 0.02);
+        color: #e2e8f0;
+        cursor: pointer;
+        transition: all 0.2s ease;
+      }
+      .tab-button.active {
+        border-color: #7c3aed;
+        box-shadow: 0 10px 30px rgba(124, 58, 237, 0.25);
+        background: linear-gradient(90deg, rgba(124, 58, 237, 0.12), rgba(56, 189, 248, 0.12));
+      }
+      .tab-panel.hidden {
+        display: none;
+      }
+      .stat-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 1rem;
+      }
+      .stat-card {
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid rgba(148, 163, 184, 0.25);
+        border-radius: 1rem;
+        padding: 1rem;
+      }
+      .stat-card h3 {
+        margin: 0 0 0.35rem;
+        font-size: 1rem;
+        color: #e2e8f0;
+      }
+      .stat-card p {
+        margin: 0.15rem 0;
+        color: #cbd5f5;
+        font-size: 0.95rem;
+      }
       .version-pill {
         display: inline-flex;
         align-items: center;
@@ -339,131 +383,49 @@
           {% endfor %}
         </ul>
       </section>
-      <form id="download-form">
-        <div>
-          <label for="url">URL del video</label>
-          <input type="url" name="url" id="url" placeholder="https://" required />
-        </div>
-        <div>
-          <label for="format">Formato</label>
-          <select name="format" id="format">
-            <option value="video_high" selected>Video alta calidad (mejor disponible)</option>
-            <option value="video_med">Video web (MP4 hasta 720p)</option>
-            <option value="video_low">Video ligera (MP4 hasta 480p)</option>
-            <option value="audio_high">Audio máxima calidad (fuente)</option>
-            <option value="audio_med">Audio equilibrado (MP3 96 kbps)</option>
-            <option value="audio_low">Audio ligero (MP3 48 kbps)</option>
-            <option value="transcript_json">Transcripción completa (JSON)</option>
-            <option value="transcript_diarized_json">Transcripción diarizada (JSON)</option>
-            <option value="transcript_text">Transcripción (solo texto TXT)</option>
-            <option value="transcript_srt">Subtítulos SRT generados desde la transcripción</option>
-          </select>
-        </div>
-        <button type="submit">Descargar</button>
-        <div class="progress" id="progress" hidden>
-          <p class="progress-label" id="progress-label">Preparando…</p>
-          <div class="progress-bar">
-            <div class="progress-fill" id="progress-fill"></div>
-          </div>
-        </div>
-        <p class="status" id="status"></p>
-      </form>
-      <section class="panel">
-        <div class="panel-header">
+      <div class="tabs">
+        <button class="tab-button active" data-tab="download-tab">Download</button>
+        <button class="tab-button" data-tab="transcribe-tab">Transcribe</button>
+        <button class="tab-button" data-tab="ffmpeg-tab">FFMPEG</button>
+        <button class="tab-button" data-tab="stats-tab">Stats</button>
+      </div>
+
+      <section class="tab-panel" id="download-tab">
+        <form id="download-form">
           <div>
-            <h2>Transcribe un archivo local</h2>
-            <p class="hint">Sube audio o video corto y obtén transcripción directa desde el navegador.</p>
-          </div>
-        </div>
-        <form id="upload-form" class="upload-form">
-          <div>
-            <label for="upload-file">Archivo</label>
-            <input
-              type="file"
-              id="upload-file"
-              name="file"
-              accept="application/octet-stream,audio/*,video/*"
-              required
-            />
+            <label for="url">URL del video</label>
+            <input type="url" name="url" id="url" placeholder="https://" required />
           </div>
           <div>
-            <label for="upload-format">Formato</label>
-            <select name="media_format" id="upload-format">
-              <option value="transcript_text" selected>Transcripción (TXT)</option>
+            <label for="format">Formato</label>
+            <select name="format" id="format">
+              <option value="video_high" selected>Video alta calidad (mejor disponible)</option>
+              <option value="video_med">Video web (MP4 hasta 720p)</option>
+              <option value="video_low">Video ligera (MP4 hasta 480p)</option>
+              <option value="audio_high">Audio máxima calidad (fuente)</option>
+              <option value="audio_med">Audio equilibrado (MP3 96 kbps)</option>
+              <option value="audio_low">Audio ligero (MP3 48 kbps)</option>
               <option value="transcript_json">Transcripción completa (JSON)</option>
               <option value="transcript_diarized_json">Transcripción diarizada (JSON)</option>
-              <option value="transcript_srt">Subtítulos SRT</option>
+              <option value="transcript_diarized_text">Transcripción diarizada (TXT)</option>
+              <option value="transcript_translate_json">Traducción al español (JSON)</option>
+              <option value="transcript_translate_text">Traducción al español (TXT)</option>
+              <option value="transcript_translate_srt">Traducción al español (SRT)</option>
+              <option value="transcript_translate_diarized_json">Traducción diarizada al español (JSON)</option>
+              <option value="transcript_translate_diarized_text">Traducción diarizada al español (TXT)</option>
+              <option value="transcript_text">Transcripción (solo texto TXT)</option>
+              <option value="transcript_srt">Subtítulos SRT generados desde la transcripción</option>
             </select>
           </div>
-          <button type="submit">Transcribir archivo</button>
-          <div class="progress" id="upload-progress" hidden>
-            <p class="progress-label" id="upload-progress-label">Preparando…</p>
+          <button type="submit">Descargar</button>
+          <div class="progress" id="progress" hidden>
+            <p class="progress-label" id="progress-label">Preparando…</p>
             <div class="progress-bar">
-              <div class="progress-fill" id="upload-progress-fill"></div>
+              <div class="progress-fill" id="progress-fill"></div>
             </div>
           </div>
-          <p class="status" id="upload-status"></p>
+          <p class="status" id="status"></p>
         </form>
-      </section>
-      <section class="panel">
-        <div class="panel-header">
-          <div>
-            <h2>Operaciones con ffmpeg</h2>
-            <p class="hint">
-              Convierte un archivo local con los presets <code>ffmpeg_*</code>. Ideal para generar masters ligeros sin
-              salir del navegador.
-            </p>
-          </div>
-        </div>
-        <form id="ffmpeg-form" class="upload-form">
-          <div>
-            <label for="ffmpeg-file">Archivo</label>
-            <input
-              type="file"
-              id="ffmpeg-file"
-              name="file"
-              accept="application/octet-stream,audio/*,video/*"
-              required
-            />
-          </div>
-          <div>
-            <label for="ffmpeg-format">Perfil ffmpeg</label>
-            <select name="media_format" id="ffmpeg-format">
-              <option value="ffmpeg_mp3-192" selected>ffmpeg_mp3-192 · MP3 a 192 kbps</option>
-              <option value="ffmpeg_mp3-128">ffmpeg_mp3-128 · MP3 a 128 kbps</option>
-              <option value="ffmpeg_mp3-96">ffmpeg_mp3-96 · MP3 a 96 kbps</option>
-              <option value="ffmpeg_mp3-64">ffmpeg_mp3-64 · MP3 a 64 kbps</option>
-              <option value="ffmpeg_wav">ffmpeg_wav · WAV sin pérdidas</option>
-              <option value="ffmpeg_480p">ffmpeg_480p · Video ligero a 480p</option>
-              <option value="ffmpeg_720p">ffmpeg_720p · Video optimizado a 720p</option>
-              <option value="ffmpeg_1080p">ffmpeg_1080p · Copia equilibrada a 1080p</option>
-              <option value="ffmpeg_1440p">ffmpeg_1440p · Recodifica video a 1440p</option>
-              <option value="ffmpeg_3840p">ffmpeg_3840p · Master 4K</option>
-            </select>
-          </div>
-          <button type="submit">Convertir archivo con ffmpeg</button>
-          <div class="progress" id="ffmpeg-progress" hidden>
-            <p class="progress-label" id="ffmpeg-progress-label">Preparando…</p>
-            <div class="progress-bar">
-              <div class="progress-fill" id="ffmpeg-progress-fill"></div>
-            </div>
-          </div>
-          <p class="status" id="ffmpeg-status"></p>
-        </form>
-      </section>
-      <section class="dashboard">
-        <section class="panel">
-          <div class="panel-header">
-            <div>
-              <h2>Actividad de la última semana</h2>
-              <p class="hint">Mantén a la vista cuántas descargas y aciertos de caché llevas.</p>
-            </div>
-          </div>
-          <div class="chart-wrapper">
-            <canvas id="usage-chart" height="180"></canvas>
-          </div>
-          <p class="panel-status" id="usage-status"></p>
-        </section>
         <section class="panel">
           <div class="panel-header">
             <div>
@@ -480,6 +442,156 @@
           <p class="panel-status" id="cache-status"></p>
         </section>
       </section>
+
+      <section class="tab-panel hidden" id="transcribe-tab">
+        <section class="panel">
+          <div class="panel-header">
+            <div>
+              <h2>Transcribe un archivo local</h2>
+              <p class="hint">Sube audio o video corto y obtén transcripción directa.</p>
+            </div>
+          </div>
+          <form id="upload-form" class="upload-form">
+            <div>
+              <label for="upload-file">Archivo</label>
+              <input
+                type="file"
+                id="upload-file"
+                name="file"
+                accept="application/octet-stream,audio/*,video/*"
+                required
+              />
+            </div>
+            <div>
+              <label for="upload-format">Formato</label>
+              <select name="media_format" id="upload-format">
+                <option value="transcript_text" selected>Transcripción (TXT)</option>
+                <option value="transcript_json">Transcripción completa (JSON)</option>
+                <option value="transcript_diarized_json">Transcripción diarizada (JSON)</option>
+                <option value="transcript_diarized_text">Transcripción diarizada (TXT)</option>
+                <option value="transcript_translate_json">Traducción al español (JSON)</option>
+                <option value="transcript_translate_text">Traducción al español (TXT)</option>
+                <option value="transcript_translate_srt">Traducción al español (SRT)</option>
+                <option value="transcript_translate_diarized_json">Traducción diarizada al español (JSON)</option>
+                <option value="transcript_translate_diarized_text">Traducción diarizada al español (TXT)</option>
+                <option value="transcript_srt">Subtítulos SRT</option>
+              </select>
+            </div>
+            <button type="submit">Transcribir archivo</button>
+            <div class="progress" id="upload-progress" hidden>
+              <p class="progress-label" id="upload-progress-label">Preparando…</p>
+              <div class="progress-bar">
+                <div class="progress-fill" id="upload-progress-fill"></div>
+              </div>
+            </div>
+            <p class="status" id="upload-status"></p>
+          </form>
+          <p class="panel-status" id="transcribe-stats"></p>
+        </section>
+      </section>
+
+      <section class="tab-panel hidden" id="ffmpeg-tab">
+        <section class="panel">
+          <div class="panel-header">
+            <div>
+              <h2>Operaciones con ffmpeg</h2>
+              <p class="hint">
+                Convierte un archivo local con los presets <code>ffmpeg_*</code>. Ideal para generar masters ligeros sin
+                salir del navegador.
+              </p>
+            </div>
+          </div>
+          <form id="ffmpeg-form" class="upload-form">
+            <div>
+              <label for="ffmpeg-file">Archivo</label>
+              <input
+                type="file"
+                id="ffmpeg-file"
+                name="file"
+                accept="application/octet-stream,audio/*,video/*"
+                required
+              />
+            </div>
+            <div>
+              <label for="ffmpeg-format">Perfil ffmpeg</label>
+              <select name="media_format" id="ffmpeg-format">
+                <option value="ffmpeg_mp3-192" selected>ffmpeg_mp3-192 · MP3 a 192 kbps</option>
+                <option value="ffmpeg_mp3-128">ffmpeg_mp3-128 · MP3 a 128 kbps</option>
+                <option value="ffmpeg_mp3-96">ffmpeg_mp3-96 · MP3 a 96 kbps</option>
+                <option value="ffmpeg_mp3-64">ffmpeg_mp3-64 · MP3 a 64 kbps</option>
+                <option value="ffmpeg_wav">ffmpeg_wav · WAV sin pérdidas</option>
+                <option value="ffmpeg_480p">ffmpeg_480p · Video ligero a 480p</option>
+                <option value="ffmpeg_720p">ffmpeg_720p · Video optimizado a 720p</option>
+                <option value="ffmpeg_1080p">ffmpeg_1080p · Copia equilibrada a 1080p</option>
+                <option value="ffmpeg_1440p">ffmpeg_1440p · Recodifica video a 1440p</option>
+                <option value="ffmpeg_3840p">ffmpeg_3840p · Master 4K</option>
+              </select>
+            </div>
+            <button type="submit">Convertir archivo con ffmpeg</button>
+            <div class="progress" id="ffmpeg-progress" hidden>
+              <p class="progress-label" id="ffmpeg-progress-label">Preparando…</p>
+              <div class="progress-bar">
+                <div class="progress-fill" id="ffmpeg-progress-fill"></div>
+              </div>
+            </div>
+            <p class="status" id="ffmpeg-status"></p>
+          </form>
+          <p class="panel-status" id="ffmpeg-stats"></p>
+        </section>
+      </section>
+
+      <section class="tab-panel hidden" id="stats-tab">
+        <section class="panel">
+          <div class="panel-header">
+            <div>
+              <h2>Actividad global</h2>
+              <p class="hint">Descargas, transcripciones, ffmpeg y salud del servicio.</p>
+            </div>
+            <p class="panel-status" id="usage-status"></p>
+          </div>
+          <div class="chart-wrapper">
+            <canvas id="usage-chart" height="180"></canvas>
+          </div>
+        </section>
+        <section class="panel">
+          <div class="panel-header">
+            <div>
+              <h2>Resumen</h2>
+              <p class="hint">Totales, proveedores y errores recientes.</p>
+            </div>
+          </div>
+          <div class="stat-grid">
+            <div class="stat-card">
+              <h3>Descargas</h3>
+              <p id="download-stats">–</p>
+            </div>
+            <div class="stat-card">
+              <h3>Transcripciones</h3>
+              <p id="transcribe-stats">–</p>
+            </div>
+            <div class="stat-card">
+              <h3>FFMPEG</h3>
+              <p id="ffmpeg-stats">–</p>
+            </div>
+            <div class="stat-card">
+              <h3>Procesamiento</h3>
+              <p id="processing-stats">–</p>
+            </div>
+            <div class="stat-card">
+              <h3>Tráfico</h3>
+              <p id="bytes-stats">–</p>
+            </div>
+            <div class="stat-card">
+              <h3>Proveedores</h3>
+              <p id="providers-stats">–</p>
+            </div>
+            <div class="stat-card">
+              <h3>Errores</h3>
+              <p id="errors-stats">–</p>
+            </div>
+          </div>
+        </section>
+      </section>
     </main>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script>
@@ -494,6 +606,13 @@
       const refreshCacheBtn = document.getElementById('refresh-cache');
       const usageStatusEl = document.getElementById('usage-status');
       const usageCanvas = document.getElementById('usage-chart');
+      const processingStatsEl = document.getElementById('processing-stats');
+      const bytesStatsEl = document.getElementById('bytes-stats');
+      const providersStatsEl = document.getElementById('providers-stats');
+      const errorsStatsEl = document.getElementById('errors-stats');
+      const downloadStatsEl = document.getElementById('download-stats');
+      const transcribeStatsEl = document.getElementById('transcribe-stats');
+      const ffmpegStatsEl = document.getElementById('ffmpeg-stats');
       const progressContainer = document.getElementById('progress');
       const progressLabel = document.getElementById('progress-label');
       const progressFill = document.getElementById('progress-fill');
@@ -508,6 +627,21 @@
       const uploadFileInput = document.getElementById('upload-file');
       const uploadFormatSelect = document.getElementById('upload-format');
       let usageChart;
+      const tabs = document.querySelectorAll('.tab-button');
+      const panels = document.querySelectorAll('.tab-panel');
+
+      function activateTab(tabId) {
+        tabs.forEach((btn) => {
+          btn.classList.toggle('active', btn.dataset.tab === tabId);
+        });
+        panels.forEach((panel) => {
+          panel.classList.toggle('hidden', panel.id !== tabId);
+        });
+      }
+
+      tabs.forEach((btn) => {
+        btn.addEventListener('click', () => activateTab(btn.dataset.tab));
+      });
 
       const PROGRESS_STEPS = {
         default: ['Preparando solicitud…', 'Descargando archivo…', 'Completando descarga…'],
@@ -855,6 +989,8 @@
             (point) => point.transcriptions || 0,
           );
           const errors = payload.points.map((point) => point.errors || 0);
+          const translations = payload.points.map((point) => point.translations || 0);
+          const diarized = payload.points.map((point) => point.diarized || 0);
           const datasets = [
             {
               label: 'Descargas',
@@ -929,6 +1065,24 @@
               yAxisID: 'y',
             },
             {
+              label: 'Traducciones',
+              data: translations,
+              borderColor: '#22d3ee',
+              backgroundColor: 'rgba(34, 211, 238, 0.2)',
+              tension: 0.3,
+              fill: false,
+              yAxisID: 'y',
+            },
+            {
+              label: 'Diarizadas',
+              data: diarized,
+              borderColor: '#c084fc',
+              backgroundColor: 'rgba(192, 132, 252, 0.2)',
+              tension: 0.3,
+              fill: false,
+              yAxisID: 'y',
+            },
+            {
               label: 'Errores',
               data: errors,
               borderColor: '#ef4444',
@@ -984,6 +1138,47 @@
           const webTotal = payload.web_downloads || 0;
           const otherTotal = payload.other_downloads || 0;
           const totalErrors = payload.errors || 0;
+          const ffmpegRuns = payload.ffmpeg_runs || payload.total_ffmpeg || 0;
+          const transcriptions = payload.transcriptions || 0;
+          const translationsTotal = payload.translations || 0;
+          const diarizedTotal = payload.diarized || 0;
+          const bytesServed = payload.bytes_served || 0;
+          const cacheBytesSaved = payload.cache_bytes_saved || 0;
+          const proc = payload.processing || {};
+          const providers = payload.providers || {};
+          const topErrors = payload.top_errors || [];
+          const cacheHits = payload.cache_hits || 0;
+          const downloadTop =
+            payload.top_formats?.find((entry) => !String(entry.media_format).startsWith('ffmpeg_')) || null;
+          const ffmpegTop =
+            payload.top_formats?.find((entry) => String(entry.media_format).startsWith('ffmpeg_')) || null;
+          const transcriptTop =
+            payload.top_formats?.find((entry) => String(entry.media_format).startsWith('transcript')) || null;
+
+          if (downloadStatsEl) {
+            let txt = `Descargas ${payload.total} · Caché ${cacheHits} · API ${apiTotal} · Web ${webTotal}`;
+            if (otherTotal) txt += ` · Otras ${otherTotal}`;
+            if (downloadTop) txt += ` · Top formato ${downloadTop.media_format} (${downloadTop.count})`;
+            downloadStatsEl.textContent = txt;
+          }
+          if (transcribeStatsEl) {
+            let txt = `Transcripciones ${transcriptions}`;
+            if (totalWords) txt += ` · Palabras ${totalWords.toLocaleString('es-ES')}`;
+            if (totalTokens && totalTokens !== totalWords) {
+              txt += ` · Tokens ${totalTokens.toLocaleString('es-ES')}`;
+            }
+            if (transcriptTop) txt += ` · Top ${transcriptTop.media_format} (${transcriptTop.count})`;
+            if (totalErrors) txt += ` · Errores ${totalErrors}`;
+            if (translationsTotal) txt += ` · Traducciones ${translationsTotal}`;
+            if (diarizedTotal) txt += ` · Diarizadas ${diarizedTotal}`;
+            transcribeStatsEl.textContent = txt;
+          }
+          if (ffmpegStatsEl) {
+            let txt = `Recodificaciones ffmpeg ${ffmpegRuns || 0}`;
+            if (ffmpegTop) txt += ` · Top ${ffmpegTop.media_format} (${ffmpegTop.count})`;
+            if (totalErrors) txt += ` · Errores ${totalErrors}`;
+            ffmpegStatsEl.textContent = txt;
+          }
           let summary = `Últimos ${payload.days} días: ${payload.total} descargas (API: ${apiTotal} · Web: ${webTotal}`;
           if (otherTotal) {
             summary += ` · Otras: ${otherTotal}`;
@@ -1001,6 +1196,12 @@
           if (payload.transcriptions) {
             summary += ` · ${payload.transcriptions} entregas de texto`;
           }
+          if (translationsTotal) {
+            summary += ` · ${translationsTotal} traducciones`;
+          }
+          if (diarizedTotal) {
+            summary += ` · ${diarizedTotal} diarizadas`;
+          }
           if (totalErrors) {
             summary += ` · ${totalErrors} errores de servicio`;
           }
@@ -1013,7 +1214,40 @@
               .join(', ');
             summary += ` · Top: ${formatsLabel}`;
           }
-          usageStatusEl.textContent = summary;
+          if (usageStatusEl) {
+            usageStatusEl.textContent = summary;
+          }
+          if (processingStatsEl) {
+            const avg = proc.average_ms ? proc.average_ms.toFixed(1) : '0';
+            const p95 = proc.p95_ms ? proc.p95_ms.toFixed(1) : '0';
+            processingStatsEl.textContent = `Media ${avg} ms · P95 ${p95} ms`;
+          }
+          if (bytesStatsEl) {
+            const bytesFmt = (val) => {
+              if (!val) return '0 B';
+              const units = ['B', 'KB', 'MB', 'GB'];
+              let v = val;
+              let i = 0;
+              while (v >= 1024 && i < units.length - 1) {
+                v /= 1024;
+                i += 1;
+              }
+              return `${v.toFixed(v >= 10 || i === 0 ? 0 : 1)} ${units[i]}`;
+            };
+            bytesStatsEl.textContent = `Servidos ${bytesFmt(bytesServed)} · Ahorro caché ${bytesFmt(cacheBytesSaved)}`;
+          }
+          if (providersStatsEl) {
+            const entries = Object.entries(providers)
+              .map(([name, count]) => `${name}: ${count}`)
+              .join(' · ');
+            providersStatsEl.textContent = entries || '–';
+          }
+          if (errorsStatsEl) {
+            const tops = (topErrors || [])
+              .map((entry) => `${entry.error_type}: ${entry.count}`)
+              .join(' · ');
+            errorsStatsEl.textContent = tops || '–';
+          }
         } catch (error) {
           usageStatusEl.textContent = error.message;
         }

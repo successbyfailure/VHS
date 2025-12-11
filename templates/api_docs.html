@@ -138,8 +138,9 @@
         <pre><code>curl -L "${BASE_URL:-http://localhost:8601}/api/download?url=https://youtu.be/&amp;format=audio" \
   -o audio.mp3</code></pre>
         <p>
-          Para obtener etiquetas de hablante usa <code>format=transcript_diarized_json</code> (requiere whisper-asr
-          configurado como <code>WHISPER_ASR_URL</code>).
+          Para obtener etiquetas de hablante usa <code>format=transcript_diarized_json</code> o
+          <code>format=transcript_diarized_text</code> (requiere whisper-asr configurado como <code>WHISPER_ASR_URL</code>).
+          Las traducciones <code>transcript_translate_*</code> también se gestionan vía whisper-asr con destino español.
         </p>
       </section>
       <section>
@@ -175,7 +176,7 @@
   -F "media_format=transcript_srt" \
   -F "file=@/ruta/al/audio.mp4" \
   -o subtitulos.srt</code></pre>
-        <p>Los formatos válidos son <code>transcript_json</code>, <code>transcript_text</code>, <code>transcript_srt</code> y <code>transcript_diarized_json</code>.</p>
+        <p>Los formatos válidos son <code>transcript_json</code>, <code>transcript_text</code>, <code>transcript_srt</code>, <code>transcript_diarized_json</code>, <code>transcript_diarized_text</code>, <code>transcript_translate_json</code>, <code>transcript_translate_text</code>, <code>transcript_translate_srt</code>, <code>transcript_translate_diarized_json</code> y <code>transcript_translate_diarized_text</code>.</p>
       </section>
       <section>
         <h2>Gestionar la caché</h2>

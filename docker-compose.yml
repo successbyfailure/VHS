@@ -40,16 +40,16 @@ services:
     depends_on:
       - vhs
 
-  watchtower:
-    image: containrrr/watchtower:latest
-    command: >-
-      --cleanup --interval 300 --scope vhs --label-enable
-    environment:
-      DOCKER_API_VERSION: "1.44"
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "2m"
-    restart: unless-stopped
+#  watchtower:
+#    image: containrrr/watchtower:latest
+#    command: >-
+#      --cleanup --interval 300 --scope vhs --label-enable
+#    environment:
+#      DOCKER_API_VERSION: "1.44"
+#    volumes:
+#      - /var/run/docker.sock:/var/run/docker.sock
+#    logging:
+#      driver: "json-file"
+#      options:
+#        max-size: "2m"
+#    restart: unless-stopped
