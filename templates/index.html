@@ -273,23 +273,6 @@
         min-height: 1rem;
         margin-top: 0.5rem;
       }
-      .checkbox-field {
-        display: flex;
-        flex-direction: column;
-        gap: 0.35rem;
-        align-items: flex-start;
-      }
-      .checkbox-label {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.5rem;
-      }
-      .checkbox-label input {
-        width: auto;
-      }
-      .hint-small {
-        font-size: 0.85rem;
-      }
       .chart-wrapper {
         margin-top: 1rem;
       }
@@ -371,16 +354,10 @@
             <option value="audio_med">Audio equilibrado (MP3 96 kbps)</option>
             <option value="audio_low">Audio ligero (MP3 48 kbps)</option>
             <option value="transcript_json">Transcripción completa (JSON)</option>
+            <option value="transcript_diarized_json">Transcripción diarizada (JSON)</option>
             <option value="transcript_text">Transcripción (solo texto TXT)</option>
             <option value="transcript_srt">Subtítulos SRT generados desde la transcripción</option>
           </select>
-        </div>
-        <div id="diarization-field" class="checkbox-field" hidden>
-          <label class="checkbox-label" for="diarization">
-            <input type="checkbox" name="diarization" id="diarization" value="true" />
-            <span>Incluir diarización (requiere whisper-asr)</span>
-          </label>
-          <p class="hint hint-small">Añade etiquetas de hablante en la transcripción.</p>
         </div>
         <button type="submit">Descargar</button>
         <div class="progress" id="progress" hidden>
@@ -414,15 +391,9 @@
             <select name="media_format" id="upload-format">
               <option value="transcript_text" selected>Transcripción (TXT)</option>
               <option value="transcript_json">Transcripción completa (JSON)</option>
+              <option value="transcript_diarized_json">Transcripción diarizada (JSON)</option>
               <option value="transcript_srt">Subtítulos SRT</option>
             </select>
-          </div>
-          <div class="checkbox-field">
-            <label class="checkbox-label" for="upload-diarization">
-              <input type="checkbox" name="diarization" id="upload-diarization" value="true" />
-              <span>Incluir diarización (whisper-asr)</span>
-            </label>
-            <p class="hint hint-small">Se añadirán etiquetas de locutor en JSON, SRT y TXT.</p>
           </div>
           <button type="submit">Transcribir archivo</button>
           <div class="progress" id="upload-progress" hidden>
@@ -536,10 +507,6 @@
       const uploadProgressFill = document.getElementById('upload-progress-fill');
       const uploadFileInput = document.getElementById('upload-file');
       const uploadFormatSelect = document.getElementById('upload-format');
-      const formatSelect = document.getElementById('format');
-      const diarizationField = document.getElementById('diarization-field');
-      const diarizationCheckbox = document.getElementById('diarization');
-      const uploadDiarizationCheckbox = document.getElementById('upload-diarization');
       let usageChart;
 
       const PROGRESS_STEPS = {
@@ -557,15 +524,6 @@
           'Empaquetando descarga…',
         ],
       };
-
-      function updateDiarizationVisibility() {
-        if (!formatSelect || !diarizationField) return;
-        const isTranscript = String(formatSelect.value || '').startsWith('transcript');
-        diarizationField.hidden = !isTranscript;
-        if (!isTranscript && diarizationCheckbox) {
-          diarizationCheckbox.checked = false;
-        }
-      }
 
       function createProgressTracker(container, labelEl, fillEl) {
         let steps = [];
@@ -627,10 +585,6 @@
         uploadProgressLabel,
         uploadProgressFill,
       );
-      if (formatSelect) {
-        formatSelect.addEventListener('change', updateDiarizationVisibility);
-        updateDiarizationVisibility();
-      }
 
       function triggerBlobDownload(blob, filename) {
         const url = window.URL.createObjectURL(blob);
@@ -698,14 +652,10 @@
           event.preventDefault();
           const formData = new FormData(formElement);
           const format = String(formData.get('format') || 'video_high');
-          const isTranscript = format.startsWith('transcript');
-          if (!isTranscript) {
-            formData.delete('diarization');
-          } else if (diarizationCheckbox && !diarizationCheckbox.checked) {
-            formData.delete('diarization');
-          }
           const steps =
-            detectTranscription && isTranscript ? PROGRESS_STEPS.transcription : PROGRESS_STEPS.default;
+            detectTranscription && format.startsWith('transcript')
+              ? PROGRESS_STEPS.transcription
+              : PROGRESS_STEPS.default;
           tracker.reset();
           tracker.start(steps);
           statusElement.textContent = steps[0] || 'Preparando solicitud…';
@@ -759,9 +709,6 @@
         const formData = new FormData();
         formData.append('file', uploadFileInput.files[0]);
         formData.append('media_format', uploadFormatSelect?.value || 'transcript_text');
-        if (uploadDiarizationCheckbox?.checked) {
-          formData.append('diarization', 'true');
-        }
         uploadProgress.reset();
         uploadProgress.start(PROGRESS_STEPS.transcription);
         uploadStatusEl.textContent = 'Preparando archivo local…';

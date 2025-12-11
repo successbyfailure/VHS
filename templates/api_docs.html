@@ -138,8 +138,8 @@
         <pre><code>curl -L "${BASE_URL:-http://localhost:8601}/api/download?url=https://youtu.be/&amp;format=audio" \
   -o audio.mp3</code></pre>
         <p>
-          Si el formato es <code>transcript_json</code>, <code>transcript_text</code> o <code>transcript_srt</code>,
-          añade <code>diarization=true</code> para incluir etiquetas de hablante (requiere whisper-asr configurado).
+          Para obtener etiquetas de hablante usa <code>format=transcript_diarized_json</code> (requiere whisper-asr
+          configurado como <code>WHISPER_ASR_URL</code>).
         </p>
       </section>
       <section>
@@ -175,11 +175,7 @@
   -F "media_format=transcript_srt" \
   -F "file=@/ruta/al/audio.mp4" \
   -o subtitulos.srt</code></pre>
-        <p>
-          Puedes añadir <code>-F "diarization=true"</code> para propagar la diarización a whisper-asr y recibir
-          segmentos etiquetados por hablante.
-        </p>
-        <p>Los formatos válidos son <code>transcript_json</code>, <code>transcript_text</code> y <code>transcript_srt</code>.</p>
+        <p>Los formatos válidos son <code>transcript_json</code>, <code>transcript_text</code>, <code>transcript_srt</code> y <code>transcript_diarized_json</code>.</p>
       </section>
       <section>
         <h2>Gestionar la caché</h2>

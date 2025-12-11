@@ -277,7 +277,12 @@ FFMPEG_PRESETS: Dict[str, Dict[str, Any]] = {
         "audio_bitrate_kbps": 64,
     },
 }
-TRANSCRIPTION_FORMATS = {"transcript_json", "transcript_text", "transcript_srt"}
+TRANSCRIPTION_FORMATS = {
+    "transcript_json",
+    "transcript_text",
+    "transcript_srt",
+    "transcript_diarized_json",
+}
 SUPPORTED_MEDIA_FORMATS = {
     *VIDEO_FORMAT_PROFILES,
     *VIDEO_FORMAT_ALIASES,
@@ -286,6 +291,9 @@ SUPPORTED_MEDIA_FORMATS = {
     *TRANSCRIPTION_FORMATS,
 }
 MEDIA_FORMAT_PATTERN = f"^({'|'.join(sorted(SUPPORTED_MEDIA_FORMATS))})$"
+
+def is_diarization_format(media_format: str) -> bool:
+    return normalize_media_format(media_format) == "transcript_diarized_json"
 
 FORMAT_DESCRIPTIONS: List[Dict[str, str]] = [
     {
@@ -327,6 +335,10 @@ FORMAT_DESCRIPTIONS: List[Dict[str, str]] = [
     {
         "name": "transcript_srt",
         "description": "Subtítulos compatibles con reproductores",
+    },
+    {
+        "name": "transcript_diarized_json",
+        "description": "Transcripción JSON con etiquetas de hablante (whisper-asr)",
     },
 ]
 
@@ -388,6 +400,7 @@ FORMAT_EXTENSIONS = {
     "transcript_json": ".json",
     "transcript_text": ".txt",
     "transcript_srt": ".srt",
+    "transcript_diarized_json": ".json",
 }
 
 for preset_name, preset in FFMPEG_PRESETS.items():
@@ -398,6 +411,8 @@ TRANSCRIPTION_FILE_SUFFIX = ".transcript.json"
 
 def media_type_for_format(media_format: str) -> str:
     normalized = normalize_media_format(media_format)
+    if normalized == "transcript_diarized_json":
+        return "application/json"
     if normalized == "transcript_json":
         return "application/json"
     if normalized in TRANSCRIPTION_FORMATS - {"transcript_json"}:
@@ -1171,9 +1186,10 @@ def estimate_transcription_stats(payload: Dict[str, Any]) -> Dict[str, int]:
 
 
 def render_transcription_payload(payload: Dict[str, Any], media_format: str) -> bytes:
-    if media_format == "transcript_json":
+    normalized = normalize_media_format(media_format)
+    if normalized in {"transcript_json", "transcript_diarized_json"}:
         text = json.dumps(payload, ensure_ascii=False, indent=2)
-    elif media_format == "transcript_srt":
+    elif normalized == "transcript_srt":
         text = transcription_payload_to_srt(payload)
     else:
         text = _transcription_text_only(payload)
@@ -1333,12 +1349,13 @@ def transcribe_audio_file(file_path: Path, diarization: bool = False) -> Dict[st
     raise DownloadError(f"No se pudo transcribir el audio: {joined or 'error desconocido'}")
 
 
-def generate_transcription_file(
-    url: str, media_format: str, diarization: bool = False
-) -> Tuple[Path, Dict]:
+def generate_transcription_file(url: str, media_format: str) -> Tuple[Path, Dict]:
     if media_format not in TRANSCRIPTION_FORMATS:
         raise DownloadError("Formato de transcripción no soportado")
-    diarization_suffix = f"diarization={int(bool(diarization))}"
+    diarization = is_diarization_format(media_format)
+    if diarization and not WHISPER_ASR_URL:
+        raise DownloadError("La diarización requiere configurar WHISPER_ASR_URL apuntando a whisper-asr")
+    diarization_suffix = f"diarization={int(diarization)}"
     key = cache_key(f"{url}::{diarization_suffix}", media_format)
     purge_expired_entries()
     cached_path, cached_meta = fetch_cached_file(key)
@@ -1461,10 +1478,6 @@ async def download_endpoint(
     media_format: str = Query(
         DEFAULT_VIDEO_FORMAT, pattern=MEDIA_FORMAT_PATTERN, alias="format"
     ),
-    diarization: bool = Query(
-        False,
-        description="Activa la diarización (solo whisper-asr)",
-    ),
 ):
     format_value = media_format.lower()
     if format_value not in SUPPORTED_MEDIA_FORMATS:
@@ -1481,7 +1494,7 @@ async def download_endpoint(
     try:
         if normalized_format in TRANSCRIPTION_FORMATS:
             file_path, metadata = await run_in_threadpool(
-                generate_transcription_file, url, normalized_format, diarization
+                generate_transcription_file, url, normalized_format
             )
         elif normalized_format in FFMPEG_PRESETS:
             file_path, metadata = await run_in_threadpool(
@@ -1672,7 +1685,6 @@ async def ffmpeg_upload(
 async def transcribe_upload(
     request: Request,
     media_format: str = Form("transcript_text"),
-    diarization: bool = Form(False),
     file: UploadFile = File(...),
 ):
     format_value = media_format.lower()
@@ -1680,12 +1692,19 @@ async def transcribe_upload(
         raise HTTPException(
             status_code=400,
             detail=(
-                "Formato inválido. Usa 'transcript_json', 'transcript_text' o 'transcript_srt'."
+                "Formato inválido. Usa 'transcript_json', 'transcript_text', "
+                "'transcript_srt' o 'transcript_diarized_json'."
             ),
         )
     if not file.filename:
         raise HTTPException(status_code=400, detail="Incluye un archivo de audio o video")
 
+    diarization = is_diarization_format(format_value)
+    if diarization and not WHISPER_ASR_URL:
+        raise HTTPException(
+            status_code=400,
+            detail="La diarización requiere configurar WHISPER_ASR_URL",
+        )
     temp_path = await save_upload_file(file)
     try:
         audio_path = await run_in_threadpool(
