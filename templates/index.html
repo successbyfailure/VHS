@@ -640,8 +640,13 @@
       }
 
       tabs.forEach((btn) => {
-        btn.addEventListener('click', () => activateTab(btn.dataset.tab));
+        btn.type = 'button';
+        btn.addEventListener('click', (event) => {
+          event.preventDefault();
+          activateTab(btn.dataset.tab);
+        });
       });
+      activateTab('download-tab');
 
       const PROGRESS_STEPS = {
         default: ['Preparando solicitud…', 'Descargando archivo…', 'Completando descarga…'],
@@ -1147,7 +1152,7 @@
           const proc = payload.processing || {};
           const providers = payload.providers || {};
           const topErrors = payload.top_errors || [];
-          const cacheHits = payload.cache_hits || 0;
+          const totalCacheHits = payload.cache_hits || 0;
           const downloadTop =
             payload.top_formats?.find((entry) => !String(entry.media_format).startsWith('ffmpeg_')) || null;
           const ffmpegTop =
@@ -1156,7 +1161,7 @@
             payload.top_formats?.find((entry) => String(entry.media_format).startsWith('transcript')) || null;
 
           if (downloadStatsEl) {
-            let txt = `Descargas ${payload.total} · Caché ${cacheHits} · API ${apiTotal} · Web ${webTotal}`;
+            let txt = `Descargas ${payload.total} · Caché ${totalCacheHits} · API ${apiTotal} · Web ${webTotal}`;
             if (otherTotal) txt += ` · Otras ${otherTotal}`;
             if (downloadTop) txt += ` · Top formato ${downloadTop.media_format} (${downloadTop.count})`;
             downloadStatsEl.textContent = txt;
@@ -1183,7 +1188,7 @@
           if (otherTotal) {
             summary += ` · Otras: ${otherTotal}`;
           }
-          summary += `) · ${payload.cache_hits} desde caché.`;
+          summary += `) · ${totalCacheHits} desde caché.`;
           if (totalWords) {
             summary += ` · ${totalWords.toLocaleString('es-ES')} palabras transcritas`;
           }
