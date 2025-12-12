@@ -149,7 +149,7 @@ FFMPEG_PRESETS: Dict[str, Dict[str, Any]] = {
         "args": [
             *FFMPEG_HWACCEL_ARGS,
             "-vf",
-            "scale=-2:480",
+            "scale_cuda=-2:480" if FFMPEG_ENABLE_NVENC else "scale=-2:480",
             "-c:v",
             FFMPEG_VIDEO_ENCODER,
             "-preset",
@@ -176,7 +176,7 @@ FFMPEG_PRESETS: Dict[str, Dict[str, Any]] = {
         "args": [
             *FFMPEG_HWACCEL_ARGS,
             "-vf",
-            "scale=-2:720",
+            "scale_cuda=-2:720" if FFMPEG_ENABLE_NVENC else "scale=-2:720",
             "-c:v",
             FFMPEG_VIDEO_ENCODER,
             "-preset",
@@ -203,7 +203,7 @@ FFMPEG_PRESETS: Dict[str, Dict[str, Any]] = {
         "args": [
             *FFMPEG_HWACCEL_ARGS,
             "-vf",
-            "scale=-2:1080",
+            "scale_cuda=-2:1080" if FFMPEG_ENABLE_NVENC else "scale=-2:1080",
             "-c:v",
             FFMPEG_VIDEO_ENCODER,
             "-preset",
@@ -230,7 +230,7 @@ FFMPEG_PRESETS: Dict[str, Dict[str, Any]] = {
         "args": [
             *FFMPEG_HWACCEL_ARGS,
             "-vf",
-            "scale=-2:1440",
+            "scale_cuda=-2:1440" if FFMPEG_ENABLE_NVENC else "scale=-2:1440",
             "-c:v",
             FFMPEG_VIDEO_ENCODER,
             "-preset",
@@ -257,7 +257,7 @@ FFMPEG_PRESETS: Dict[str, Dict[str, Any]] = {
         "args": [
             *FFMPEG_HWACCEL_ARGS,
             "-vf",
-            "scale=-2:2160",
+            "scale_cuda=-2:2160" if FFMPEG_ENABLE_NVENC else "scale=-2:2160",
             "-c:v",
             FFMPEG_VIDEO_ENCODER,
             "-preset",
