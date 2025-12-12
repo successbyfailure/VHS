@@ -363,14 +363,6 @@
             </p>
           </div>
         </div>
-        <p class="hint">
-          Todo lo que descargas o conviertes se guarda 24h en una caché estilo VHS,
-          perfecta para rebobinar descargas, acelerar bots e inflar tus colecciones.
-        </p>
-        <p class="hint">
-          Descargo retro: no nos hacemos responsables si tu ordenador explota, tu gato empieza a
-          hablar o se abre un portal al multiverso justo después de pulsar «Descargar».
-        </p>
         <div class="hero-actions">
           <a class="ghost-button" href="/docs/api">API docs</a>
         </div>
@@ -381,6 +373,7 @@
           {% for service in supported_services %}
           <li class="service-chip">{{ service }}</li>
           {% endfor %}
+          <li class="service-chip">Entre otros</li>
         </ul>
       </section>
       <div class="tabs">
@@ -592,6 +585,14 @@
           </div>
         </section>
       </section>
+      <footer class="footer">
+        <p class="hint">
+          Guardamos tus descargas 24 h en una caché VHS auténtica: rebobina, repite y colecciona como si fuera 1994.
+        </p>
+        <p class="hint">
+          Aviso legal no-legal: si al darle a «Descargar» tu PC se autodestruye, tu gato habla latín o se rasga el tejido del espacio-tiempo… no es cosa nuestra.
+        </p>
+      </footer>
     </main>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script>
