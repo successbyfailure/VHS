@@ -884,6 +884,7 @@ def build_ydl_options(
         "retries": 3,
         "http_headers": {"User-Agent": YTDLP_USER_AGENT},
         "js_runtimes": js_runtimes or None,
+        "remote_components": {"ejs": "github"},
     }
 
     if YTDLP_EXTRACTOR_ARGS:
