@@ -1,7 +1,7 @@
 services:
   prepare-data:
     image: ghcr.io/successbyfailure/vhs-gpu:latest
-    container_name: vhs-gpu-prepare-data
+    container_name: vhs-prepare-data
     user: "0:0"
     command: >-
       sh -c "mkdir -p /app/data/cache/_meta /config && chown -R ${UID:-1000}:${GID:-1000} /app/data /config"
@@ -18,7 +18,7 @@ services:
       context: .
       dockerfile: Dockerfile.gpu
     image: ghcr.io/successbyfailure/vhs-gpu:latest
-    container_name: vhs-gpu
+    container_name: vhs
     user: "${UID:-1000}:${GID:-1000}"
     runtime: nvidia
     env_file:
@@ -34,13 +34,6 @@ services:
     depends_on:
       prepare-data:
         condition: service_completed_successfully
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
     ports:
       - "8601:8601"
     volumes:
