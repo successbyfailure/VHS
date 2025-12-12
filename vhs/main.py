@@ -3,6 +3,7 @@ import json
 import os
 import random
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -861,6 +862,13 @@ def save_meta(key: str, metadata: Dict) -> None:
 def build_ydl_options(
     media_format: str, *, cache_key_value: str, force_no_proxy: bool = False
 ) -> Dict:
+    js_runtimes: Dict[str, Dict[str, str]] = {}
+    for candidate in ("node", "nodejs"):
+        path = shutil.which(candidate)
+        if path:
+            js_runtimes[candidate] = {"executable": path}
+            break
+
     normalized_format = normalize_media_format(media_format)
     base_opts: Dict = {
         "quiet": True,
@@ -875,6 +883,7 @@ def build_ydl_options(
         "overwrites": True,
         "retries": 3,
         "http_headers": {"User-Agent": YTDLP_USER_AGENT},
+        "js_runtimes": js_runtimes or None,
     }
 
     if YTDLP_EXTRACTOR_ARGS:
