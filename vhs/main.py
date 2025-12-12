@@ -4,6 +4,7 @@ import os
 import random
 import re
 import subprocess
+import sys
 import tempfile
 import time
 from datetime import datetime, timedelta, timezone
@@ -132,7 +133,7 @@ VIDEO_FORMAT_ALIASES = {
 }
 FFMPEG_PRESETS: Dict[str, Dict[str, Any]] = {
     "ffmpeg_480p": {
-        "description": "Transcodifica a 480p (h.264 2.5 Mbps / AAC 128 kbps)",
+        "description": "Transcodifica a 480p (h.264 CRF 24 máx. ~1.8 Mbps / AAC 128 kbps)",
         "extension": ".mp4",
         "media_type": "video/mp4",
         "args": [
@@ -141,20 +142,24 @@ FFMPEG_PRESETS: Dict[str, Dict[str, Any]] = {
             "-c:v",
             "libx264",
             "-preset",
-            "faster",
-            "-b:v",
-            "2500k",
+            "veryfast",
+            "-crf",
+            "24",
+            "-maxrate",
+            "1800k",
+            "-bufsize",
+            "3600k",
             "-c:a",
             "aac",
             "-b:a",
             "128k",
         ],
         "video_height": 480,
-        "video_bitrate_kbps": 2500,
+        "video_bitrate_kbps": 1800,
         "audio_bitrate_kbps": 128,
     },
     "ffmpeg_720p": {
-        "description": "Transcodifica a 720p (h.264 4 Mbps / AAC 160 kbps)",
+        "description": "Transcodifica a 720p (h.264 CRF 23 máx. ~3.2 Mbps / AAC 160 kbps)",
         "extension": ".mp4",
         "media_type": "video/mp4",
         "args": [
@@ -164,19 +169,23 @@ FFMPEG_PRESETS: Dict[str, Dict[str, Any]] = {
             "libx264",
             "-preset",
             "veryfast",
-            "-b:v",
-            "4000k",
+            "-crf",
+            "23",
+            "-maxrate",
+            "3200k",
+            "-bufsize",
+            "6400k",
             "-c:a",
             "aac",
             "-b:a",
             "160k",
         ],
         "video_height": 720,
-        "video_bitrate_kbps": 4000,
+        "video_bitrate_kbps": 3200,
         "audio_bitrate_kbps": 160,
     },
     "ffmpeg_1080p": {
-        "description": "Transcodifica a 1080p (h.264 6.5 Mbps / AAC 176 kbps)",
+        "description": "Transcodifica a 1080p (h.264 CRF 22 máx. ~4.8 Mbps / AAC 176 kbps)",
         "extension": ".mp4",
         "media_type": "video/mp4",
         "args": [
@@ -186,19 +195,23 @@ FFMPEG_PRESETS: Dict[str, Dict[str, Any]] = {
             "libx264",
             "-preset",
             "veryfast",
-            "-b:v",
-            "6500k",
+            "-crf",
+            "22",
+            "-maxrate",
+            "4800k",
+            "-bufsize",
+            "9600k",
             "-c:a",
             "aac",
             "-b:a",
             "176k",
         ],
         "video_height": 1080,
-        "video_bitrate_kbps": 6500,
+        "video_bitrate_kbps": 4800,
         "audio_bitrate_kbps": 176,
     },
     "ffmpeg_1440p": {
-        "description": "Transcodifica a 1440p (h.264 12 Mbps / AAC 192 kbps)",
+        "description": "Transcodifica a 1440p (h.264 CRF 21 máx. ~8 Mbps / AAC 192 kbps)",
         "extension": ".mp4",
         "media_type": "video/mp4",
         "args": [
@@ -208,19 +221,23 @@ FFMPEG_PRESETS: Dict[str, Dict[str, Any]] = {
             "libx264",
             "-preset",
             "faster",
-            "-b:v",
-            "12000k",
+            "-crf",
+            "21",
+            "-maxrate",
+            "8000k",
+            "-bufsize",
+            "16000k",
             "-c:a",
             "aac",
             "-b:a",
             "192k",
         ],
         "video_height": 1440,
-        "video_bitrate_kbps": 12000,
+        "video_bitrate_kbps": 8000,
         "audio_bitrate_kbps": 192,
     },
     "ffmpeg_3840p": {
-        "description": "Transcodifica a 4K (h.264 20 Mbps / AAC 256 kbps)",
+        "description": "Transcodifica a 4K (h.264 CRF 20 máx. ~12 Mbps / AAC 256 kbps)",
         "extension": ".mp4",
         "media_type": "video/mp4",
         "args": [
@@ -230,15 +247,19 @@ FFMPEG_PRESETS: Dict[str, Dict[str, Any]] = {
             "libx264",
             "-preset",
             "fast",
-            "-b:v",
-            "20000k",
+            "-crf",
+            "20",
+            "-maxrate",
+            "12000k",
+            "-bufsize",
+            "24000k",
             "-c:a",
             "aac",
             "-b:a",
             "256k",
         ],
         "video_height": 2160,
-        "video_bitrate_kbps": 20000,
+        "video_bitrate_kbps": 12000,
         "audio_bitrate_kbps": 256,
     },
     "ffmpeg_wav": {
@@ -547,8 +568,12 @@ def record_download_event(
         event["translation"] = True
     if diarization:
         event["diarization"] = True
-    with USAGE_LOG_PATH.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(event, ensure_ascii=False) + "\n")
+    try:
+        with USAGE_LOG_PATH.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(event, ensure_ascii=False) + "\n")
+    except OSError as exc:
+        # El registro es best-effort: no debe impedir completar la descarga.
+        print(f"[vhs] No se pudo registrar el uso: {exc}", file=sys.stderr)
 
 
 def record_error_event(error_type: str, source: str = "api") -> None:
@@ -561,8 +586,11 @@ def record_error_event(error_type: str, source: str = "api") -> None:
         "error_type": error_type,
         "source": normalized_source,
     }
-    with USAGE_LOG_PATH.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(event, ensure_ascii=False) + "\n")
+    try:
+        with USAGE_LOG_PATH.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(event, ensure_ascii=False) + "\n")
+    except OSError as exc:
+        print(f"[vhs] No se pudo registrar el error: {exc}", file=sys.stderr)
 
 
 def summarize_usage(days: int = 7) -> Dict[str, Any]:
@@ -1191,6 +1219,27 @@ def ensure_transcription_ready() -> None:
     )
 
 
+def _ensure_dir_writable(path: Path, purpose: str) -> None:
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise DownloadError(f"No se pudo crear el directorio de {purpose} ({path}): {exc}") from exc
+    try:
+        with tempfile.NamedTemporaryFile(dir=path, prefix=".vhs_rw_test", delete=True):
+            pass
+    except OSError as exc:
+        raise DownloadError(
+            f"No se puede escribir en el directorio de {purpose} ({path}). "
+            "Revisa permisos o ajusta las variables CACHE_DIR/USAGE_LOG_PATH."
+        ) from exc
+
+
+def ensure_storage_ready() -> None:
+    _ensure_dir_writable(CACHE_DIR, "cache")
+    _ensure_dir_writable(META_DIR, "metadatos de caché")
+    _ensure_dir_writable(USAGE_LOG_PATH.parent, "registros (USAGE_LOG_PATH)")
+
+
 def _normalize_transcription_payload(payload: Any) -> Dict[str, Any]:
     if hasattr(payload, "model_dump"):
         data = payload.model_dump()
@@ -1726,6 +1775,7 @@ async def download_endpoint(
     normalized_format = normalize_media_format(format_value)
 
     try:
+        ensure_storage_ready()
         if normalized_format in TRANSCRIPTION_FORMATS:
             file_path, metadata = await run_in_threadpool(
                 generate_transcription_file, url, normalized_format
@@ -1884,8 +1934,10 @@ async def ffmpeg_upload(
     if not file.filename:
         raise HTTPException(status_code=400, detail="Incluye un archivo de audio o video")
 
-    temp_path = await save_upload_file(file)
+    temp_path: Optional[Path] = None
     try:
+        ensure_storage_ready()
+        temp_path = await save_upload_file(file)
         output_path = await run_in_threadpool(
             convert_uploaded_file_with_ffmpeg, temp_path, format_value
         )
@@ -1895,7 +1947,8 @@ async def ffmpeg_upload(
         )
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     finally:
-        cleanup_path(temp_path)
+        if temp_path:
+            cleanup_path(temp_path)
 
     download_name = build_download_name(file.filename or "ffmpeg", output_path, format_value)
     background_tasks.add_task(cleanup_path, output_path)
@@ -1937,8 +1990,10 @@ async def transcribe_upload(
             status_code=400,
             detail="La diarización y la traducción requieren configurar WHISPER_ASR_URL",
         )
-    temp_path = await save_upload_file(file)
+    temp_path: Optional[Path] = None
     try:
+        ensure_storage_ready()
+        temp_path = await save_upload_file(file)
         audio_path = await run_in_threadpool(
             extract_audio_profile_from_file, temp_path, "audio_med"
         )
@@ -1961,10 +2016,11 @@ async def transcribe_upload(
         )
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     finally:
-        try:
-            temp_path.unlink(missing_ok=True)
-        except OSError:
-            pass
+        if temp_path:
+            try:
+                temp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
     
     transcription_stats = estimate_transcription_stats(payload)
     content = render_transcription_payload(payload, format_value)

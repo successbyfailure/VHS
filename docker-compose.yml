@@ -1,12 +1,25 @@
-version: "3.9"
-
 services:
+  prepare-data:
+    image: ghcr.io/successbyfailure/vhs:latest
+    container_name: vhs-prepare-data
+    user: "0:0"
+    command: >-
+      sh -c "mkdir -p /app/data/cache/_meta /config && chown -R ${UID:-1000}:${GID:-1000} /app/data /config"
+    volumes:
+      - ./config:/config
+      - ./data:/app/data
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "2m"
+
   vhs:
     build:
       context: .
       dockerfile: Dockerfile
     image: ghcr.io/successbyfailure/vhs:latest
     container_name: vhs
+    user: "${UID:-1000}:${GID:-1000}"
     env_file:
       - .env
     environment:
@@ -16,6 +29,9 @@ services:
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
       - "com.centurylinklabs.watchtower.scope=vhs"
+    depends_on:
+      prepare-data:
+        condition: service_completed_successfully
     ports:
       - "8601:8601"
     volumes:
