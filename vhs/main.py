@@ -54,6 +54,7 @@ CACHE_DIR = Path(os.getenv("CACHE_DIR", "data/cache"))
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 META_DIR = CACHE_DIR / "_meta"
 META_DIR.mkdir(parents=True, exist_ok=True)
+YTDLP_CACHE_DIR = Path(os.getenv("YTDLP_CACHE_DIR", CACHE_DIR / "yt_dlp_cache"))
 CACHE_TTL_SECONDS = int(os.getenv("CACHE_TTL_SECONDS", 60 * 60 * 24))
 USAGE_LOG_PATH = Path(os.getenv("USAGE_LOG_PATH", "data/usage_log.jsonl"))
 USAGE_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -885,6 +886,7 @@ def build_ydl_options(
         "http_headers": {"User-Agent": YTDLP_USER_AGENT},
         "js_runtimes": js_runtimes or None,
         "remote_components": ["ejs:github"],
+        "cachedir": str(YTDLP_CACHE_DIR),
     }
 
     if YTDLP_EXTRACTOR_ARGS:
@@ -1263,6 +1265,7 @@ def ensure_storage_ready() -> None:
     _ensure_dir_writable(CACHE_DIR, "cache")
     _ensure_dir_writable(META_DIR, "metadatos de caché")
     _ensure_dir_writable(USAGE_LOG_PATH.parent, "registros (USAGE_LOG_PATH)")
+    _ensure_dir_writable(YTDLP_CACHE_DIR, "caché de yt-dlp (YTDLP_CACHE_DIR)")
 
 
 def _normalize_transcription_payload(payload: Any) -> Dict[str, Any]:
