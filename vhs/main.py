@@ -86,7 +86,7 @@ if _raw_extractor_args:
     except json.JSONDecodeError:
         YTDLP_EXTRACTOR_ARGS = {"youtube": [_raw_extractor_args]}
 else:
-    YTDLP_EXTRACTOR_ARGS = {"youtube": ["player_client=default"]}
+    YTDLP_EXTRACTOR_ARGS = {"youtube": ["player_client=android"]}
 TRANSCRIPTION_ENDPOINT = os.getenv("TRANSCRIPTION_ENDPOINT", "https://api.openai.com/v1")
 TRANSCRIPTION_API_KEY = os.getenv("TRANSCRIPTION_API_KEY")
 TRANSCRIPTION_MODEL = os.getenv("TRANSCRIPTION_MODEL", "gpt-4o-mini-transcribe")
@@ -884,7 +884,7 @@ def build_ydl_options(
         "retries": 3,
         "http_headers": {"User-Agent": YTDLP_USER_AGENT},
         "js_runtimes": js_runtimes or None,
-        "remote_components": {"ejs": "github"},
+        "remote_components": ["ejs:github"],
     }
 
     if YTDLP_EXTRACTOR_ARGS:
