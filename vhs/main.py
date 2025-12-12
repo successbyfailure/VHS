@@ -92,6 +92,16 @@ TRANSCRIPTION_MODEL = os.getenv("TRANSCRIPTION_MODEL", "gpt-4o-mini-transcribe")
 WHISPER_ASR_URL = os.getenv("WHISPER_ASR_URL")
 WHISPER_ASR_TIMEOUT = int(os.getenv("WHISPER_ASR_TIMEOUT", "600"))
 FFMPEG_BINARY = os.getenv("FFMPEG_BINARY", "ffmpeg")
+FFMPEG_ENABLE_NVENC = os.getenv("FFMPEG_ENABLE_NVENC", "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+FFMPEG_VIDEO_ENCODER = "h264_nvenc" if FFMPEG_ENABLE_NVENC else "libx264"
+FFMPEG_HWACCEL_ARGS: List[str] = (
+    ["-hwaccel", "cuda", "-hwaccel_output_format", "cuda"] if FFMPEG_ENABLE_NVENC else []
+)
 
 AUDIO_FORMAT_PROFILES = {
     "audio_high": {
@@ -137,10 +147,11 @@ FFMPEG_PRESETS: Dict[str, Dict[str, Any]] = {
         "extension": ".mp4",
         "media_type": "video/mp4",
         "args": [
+            *FFMPEG_HWACCEL_ARGS,
             "-vf",
             "scale=-2:480",
             "-c:v",
-            "libx264",
+            FFMPEG_VIDEO_ENCODER,
             "-preset",
             "veryfast",
             "-crf",
@@ -163,10 +174,11 @@ FFMPEG_PRESETS: Dict[str, Dict[str, Any]] = {
         "extension": ".mp4",
         "media_type": "video/mp4",
         "args": [
+            *FFMPEG_HWACCEL_ARGS,
             "-vf",
             "scale=-2:720",
             "-c:v",
-            "libx264",
+            FFMPEG_VIDEO_ENCODER,
             "-preset",
             "veryfast",
             "-crf",
@@ -189,10 +201,11 @@ FFMPEG_PRESETS: Dict[str, Dict[str, Any]] = {
         "extension": ".mp4",
         "media_type": "video/mp4",
         "args": [
+            *FFMPEG_HWACCEL_ARGS,
             "-vf",
             "scale=-2:1080",
             "-c:v",
-            "libx264",
+            FFMPEG_VIDEO_ENCODER,
             "-preset",
             "veryfast",
             "-crf",
@@ -215,10 +228,11 @@ FFMPEG_PRESETS: Dict[str, Dict[str, Any]] = {
         "extension": ".mp4",
         "media_type": "video/mp4",
         "args": [
+            *FFMPEG_HWACCEL_ARGS,
             "-vf",
             "scale=-2:1440",
             "-c:v",
-            "libx264",
+            FFMPEG_VIDEO_ENCODER,
             "-preset",
             "faster",
             "-crf",
@@ -241,10 +255,11 @@ FFMPEG_PRESETS: Dict[str, Dict[str, Any]] = {
         "extension": ".mp4",
         "media_type": "video/mp4",
         "args": [
+            *FFMPEG_HWACCEL_ARGS,
             "-vf",
             "scale=-2:2160",
             "-c:v",
-            "libx264",
+            FFMPEG_VIDEO_ENCODER,
             "-preset",
             "fast",
             "-crf",

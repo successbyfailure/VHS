@@ -1,0 +1,53 @@
+services:
+  prepare-data:
+    image: ghcr.io/successbyfailure/vhs-gpu:latest
+    container_name: vhs-gpu-prepare-data
+    user: "0:0"
+    command: >-
+      sh -c "mkdir -p /app/data/cache/_meta /config && chown -R ${UID:-1000}:${GID:-1000} /app/data /config"
+    volumes:
+      - ./config:/config
+      - ./data:/app/data
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "2m"
+
+  vhs-gpu:
+    build:
+      context: .
+      dockerfile: Dockerfile.gpu
+    image: ghcr.io/successbyfailure/vhs-gpu:latest
+    container_name: vhs-gpu
+    user: "${UID:-1000}:${GID:-1000}"
+    runtime: nvidia
+    env_file:
+      - .env
+    environment:
+      CACHE_DIR: ${CACHE_DIR:-/app/data/cache}
+      USAGE_LOG_PATH: ${USAGE_LOG_PATH:-/app/data/usage_log.jsonl}
+      YTDLP_COOKIES_FILE: ${YTDLP_COOKIES_FILE:-/config/cookies.txt}
+      FFMPEG_ENABLE_NVENC: "1"
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+      - "com.centurylinklabs.watchtower.scope=vhs"
+    depends_on:
+      prepare-data:
+        condition: service_completed_successfully
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    ports:
+      - "8601:8601"
+    volumes:
+      - ./config:/config
+      - ./data:/app/data
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "2m"
+    restart: unless-stopped

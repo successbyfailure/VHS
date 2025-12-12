@@ -1,6 +1,6 @@
 # VHS · Video Harvester Service
 
-**Versión**: 0.1.21
+**Versión**: 0.1.24
 
 Servicio FastAPI que descarga, convierte y transcribe vídeos o audios mediante `yt-dlp` y perfiles rápidos de `ffmpeg`. Este directorio está listo para vivir como repositorio independiente y generar su propia imagen de Docker.
 
@@ -52,6 +52,17 @@ docker run --env-file .env -p 8601:8601 ghcr.io/successbyfailure/vhs:latest
 
 El contenedor expone `/api/health`, `/api/probe`, `/api/download`, `/api/cache`, `/api/transcribe/upload` y `/api/ffmpeg/upload`.
 
+### Imagen con soporte NVIDIA (GPU)
+
+Para acelerar ffmpeg con NVENC se incluye `Dockerfile.gpu` y una imagen específica:
+
+```bash
+docker build -t ghcr.io/successbyfailure/vhs-gpu:latest -f Dockerfile.gpu .
+docker run --gpus all --env-file .env -p 8602:8601 ghcr.io/successbyfailure/vhs-gpu:latest
+```
+
+La variable `FFMPEG_ENABLE_NVENC=1` se activa por defecto en esta imagen. Asegúrate de usar `--gpus` (o el runtime NVIDIA) y que el host tenga drivers recientes.
+
 ## Ejecución con Docker Compose
 
 El repositorio incluye un `docker-compose.yml` que prepara volúmenes separados para
@@ -68,6 +79,7 @@ El servicio quedará disponible en `http://localhost:8601` y mantendrá los dato
 los directorios locales `./config` (por ejemplo, para `YTDLP_COOKIES_FILE` en `/config`) y
 `./data` (caché y logs en `/app/data`). Un contenedor `watchtower` se encarga de
 actualizar solo el servicio `vhs` cuando aparezcan nuevas imágenes.
+Para GPU, usa el servicio `vhs-gpu` del compose (`--gpus all`) que expone `http://localhost:8602` y habilita NVENC.
 
 ## Integración continua
 
