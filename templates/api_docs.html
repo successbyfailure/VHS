@@ -170,6 +170,25 @@
           metadatos (título, duración, categorías y miniaturas). Es ideal para que otros servicios,
           como bibliotecas multimedia o bots, clasifiquen el contenido sin esperar a la descarga.
         </p>
+        <pre><code>curl -X POST "${BASE_URL:-http://localhost:8601}/api/probe" \
+  -H "Content-Type: application/json" \
+  -d '{"url":"https://youtu.be/ID"}' | jq .</code></pre>
+      </section>
+      <section>
+        <h2>Buscar contenido</h2>
+        <p>
+          <code>POST /api/search</code> permite buscar videos usando yt-dlp con consultas de texto.
+          Devuelve una lista de resultados con ID, título y URL.
+        </p>
+        <dl>
+          <dt>query</dt>
+          <dd>Texto de búsqueda (mínimo 3 caracteres).</dd>
+          <dt>limit</dt>
+          <dd>Número máximo de resultados (1-25, por defecto 8).</dd>
+        </dl>
+        <pre><code>curl -X POST "${BASE_URL:-http://localhost:8601}/api/search" \
+  -H "Content-Type: application/json" \
+  -d '{"query":"música jazz","limit":10}' | jq .</code></pre>
       </section>
       <section>
         <h2>Transcribir un archivo local</h2>
