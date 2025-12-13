@@ -1,6 +1,6 @@
 # VHS · Video Harvester Service
 
-**Versión**: 0.2.4
+**Versión**: 0.2.5
 
 Servicio FastAPI que descarga, convierte y transcribe vídeos o audios mediante `yt-dlp` y perfiles rápidos de `ffmpeg`. Este directorio está listo para vivir como repositorio independiente y generar su propia imagen de Docker.
 
@@ -24,7 +24,7 @@ Para evitar bloqueos de YouTube es posible ajustar:
 - `YTDLP_USER_AGENT`: agente de usuario enviado a YouTube.
 - `YTDLP_BOT_PROTECTION_RETRIES`: número de intentos con agentes nuevos ante un desafío de inicio de sesión (por defecto, 3).
 - `YTDLP_BOT_PROTECTION_DELAY`: segundos de espera entre intentos (por defecto, 6).
-- `YTDLP_EXTRACTOR_ARGS`: argumentos adicionales para yt-dlp en formato JSON. Por defecto se usa `{ "youtube": ["player_client=default"] }` para evitar depender de un runtime de JavaScript.
+- `YTDLP_EXTRACTOR_ARGS`: argumentos adicionales para yt-dlp en formato JSON. Por defecto se usa `{ "youtube": ["player_client=android"] }` y se habilita el componente remoto `ejs:github` con Node.js para resolver desafíos JS.
 
 ## Diarización y traducción con whisper-asr
 
@@ -92,3 +92,21 @@ hacer push a `main`. Esto garantiza que el servicio pueda desplegarse de forma i
 - `templates/`: vistas HTML (`/` y `/docs/api`).
 - `assets/`: recursos estáticos utilizados por las plantillas.
 - `versions.json`: versión publicada del servicio.
+
+## Uso de la API (cuerpo JSON)
+
+- Descarga: `POST /api/download` con cuerpo `{"url": "...", "format": "video_1080"}`.
+- Probe: `POST /api/probe` con `{"url": "..."}`.
+- Búsqueda: `POST /api/search` con `{"query": "palabra", "limit": 8}`.
+- Subidas: `POST /api/ffmpeg/upload` y `POST /api/transcribe/upload` siguen usando `multipart/form-data`.
+
+El formato `video_1080` descarga MP4 hasta 1080p; `video_high` mantiene la calidad máxima disponible.
+
+## Bot de Telegram
+
+Hay un bot opcional (`scripts/telegram_bot.py`) que ofrece menú para descargar, transcribir, traducir o resumir.
+
+- Configura `TELEGRAM_BOT_TOKEN` (y opcionalmente `TELEGRAM_AUTH_FILE`).
+- El primer usuario que habla con el bot se convierte en admin; el resto requiere aprobación.
+- Ejecuta `python scripts/telegram_bot.py` en un entorno con las mismas variables que el servicio.
+- Si envías una URL o un archivo, el bot propone el menú y entrega el resultado (descarga, transcripción, traducción o resumen).

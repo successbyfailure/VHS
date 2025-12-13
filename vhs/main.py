@@ -16,6 +16,7 @@ import certifi
 from dotenv import load_dotenv
 from fastapi import (
     BackgroundTasks,
+    Body,
     FastAPI,
     File,
     Form,
@@ -127,6 +128,11 @@ VIDEO_FORMAT_PROFILES = {
         "format": "bv*+ba/b",
         "merge_output_format": "mp4",
         "description": "Video en la mejor calidad disponible desde la fuente",
+    },
+    "video_1080": {
+        "format": "bv*[height<=1080]+ba/b[height<=1080]/worst",
+        "merge_output_format": "mp4",
+        "description": "Video hasta 1080p equilibrado",
     },
     "video_med": {
         "format": "bv*[height<=720]+ba/b[height<=720]/worst",
@@ -356,6 +362,10 @@ FORMAT_DESCRIPTIONS: List[Dict[str, str]] = [
         "description": "MP4 en la mejor calidad disponible (mezcla best video + best audio)",
     },
     {
+        "name": "video_1080",
+        "description": "MP4 hasta 1080p con buen equilibrio de peso/calidad",
+    },
+    {
         "name": "video_med",
         "description": "MP4 hasta 720p pensado para la web",
     },
@@ -527,13 +537,11 @@ def categorize_media_format(media_format: str) -> str:
     return "video"
 
 
-def detect_request_source(request: Request) -> str:
+def detect_request_source(request: Request, fallback: Optional[str] = None) -> str:
     raw_source = (
-        request.query_params.get("source")
-        or request.headers.get("X-VHS-Source")
-        or ""
-    )
-    source = raw_source.strip().lower()
+        getattr(request, "state", None) and getattr(request.state, "source", None)
+    ) or request.query_params.get("source") or request.headers.get("X-VHS-Source") or fallback or ""
+    source = str(raw_source).strip().lower()
     if source in {"api", "web"}:
         return source
 
@@ -1751,11 +1759,15 @@ async def health() -> Dict[str, str]:
     return payload
 
 
-@app.get("/api/probe", response_class=JSONResponse)
+@app.post("/api/probe", response_class=JSONResponse)
 async def probe_endpoint(
     request: Request,
-    url: str = Query(..., description="URL a inspeccionar sin descargar"),
+    payload: Dict[str, Any] = Body(..., description="JSON con url"),
 ):
+    request.state.source = payload.get("source")
+    url = (payload.get("url") or "").strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="Incluye una URL válida en el cuerpo")
     try:
         info = await run_in_threadpool(probe_media, url)
     except DownloadError as exc:
@@ -1766,12 +1778,26 @@ async def probe_endpoint(
     return info
 
 
-@app.get("/api/search", response_class=JSONResponse)
+@app.post("/api/search", response_class=JSONResponse)
 async def search_endpoint(
     request: Request,
-    query: str = Query(..., min_length=3, description="Término de búsqueda"),
-    limit: int = Query(8, ge=1, le=25, description="Número máximo de resultados"),
+    payload: Dict[str, Any] = Body(..., description="JSON con query y limit"),
 ):
+    request.state.source = payload.get("source")
+    query = (payload.get("query") or "").strip()
+    limit_raw = payload.get("limit")
+    try:
+        limit = int(limit_raw) if limit_raw is not None else 8
+    except (TypeError, ValueError):
+        limit = 8
+    if limit < 1:
+        limit = 1
+    if limit > 25:
+        limit = 25
+    if len(query) < 3:
+        raise HTTPException(
+            status_code=400, detail="La búsqueda debe tener al menos 3 caracteres"
+        )
     try:
         items = await run_in_threadpool(search_media, query, limit)
     except DownloadError as exc:
@@ -1782,15 +1808,17 @@ async def search_endpoint(
     return {"query": query.strip(), "items": items, "services": SUPPORTED_SERVICES}
 
 
-@app.get("/api/download")
+@app.post("/api/download")
 async def download_endpoint(
     request: Request,
-    url: str = Query(..., description="URL del video a descargar"),
-    media_format: str = Query(
-        DEFAULT_VIDEO_FORMAT, pattern=MEDIA_FORMAT_PATTERN, alias="format"
-    ),
+    payload: Dict[str, Any] = Body(..., description="JSON con url y format"),
 ):
-    format_value = media_format.lower()
+    request.state.source = payload.get("source")
+    url = (payload.get("url") or "").strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="Incluye una URL válida en el cuerpo")
+    media_format_raw = payload.get("format") or payload.get("media_format") or DEFAULT_VIDEO_FORMAT
+    format_value = str(media_format_raw).lower()
     if format_value not in SUPPORTED_MEDIA_FORMATS:
         raise HTTPException(
             status_code=400,

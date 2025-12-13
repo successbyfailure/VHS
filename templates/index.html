@@ -393,6 +393,7 @@
             <label for="format">Formato</label>
             <select name="format" id="format">
               <option value="video_high" selected>Video alta calidad (mejor disponible)</option>
+              <option value="video_1080">Video 1080p (MP4 hasta 1080p)</option>
               <option value="video_med">Video web (MP4 hasta 720p)</option>
               <option value="video_low">Video ligera (MP4 hasta 480p)</option>
               <option value="audio_high">Audio máxima calidad (fuente)</option>
@@ -740,7 +741,7 @@
       async function downloadFromEndpoint(endpoint, options = {}) {
         const { statusTarget, progress, fetchOptions } = options;
         try {
-          const method = (fetchOptions && fetchOptions.method) || 'GET';
+          const method = (fetchOptions && fetchOptions.method) || 'POST';
           const message = method === 'GET' ? 'Conectando con el servidor…' : 'Enviando solicitud…';
           progress?.advance(message);
           const mergedOptions = {
@@ -748,6 +749,7 @@
             headers: {
               ...(fetchOptions?.headers || {}),
               'X-VHS-Source': 'web',
+              ...(method !== 'GET' ? { 'Content-Type': 'application/json' } : {}),
             },
           };
           const response = await fetch(endpoint, mergedOptions);
@@ -799,12 +801,19 @@
           tracker.reset();
           tracker.start(steps);
           statusElement.textContent = steps[0] || 'Preparando solicitud…';
-          const params = new URLSearchParams(formData);
-          params.set('source', 'web');
+          const payload = {
+            url: formData.get('url'),
+            format,
+            source: 'web',
+          };
           try {
-            await downloadFromEndpoint(`/api/download?${params.toString()}`, {
+            await downloadFromEndpoint(`/api/download`, {
               statusTarget: statusElement,
               progress: tracker,
+              fetchOptions: {
+                method: 'POST',
+                body: JSON.stringify(payload),
+              },
             });
           } catch (error) {
             console.error(error);

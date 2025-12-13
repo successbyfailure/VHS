@@ -128,15 +128,17 @@
       </section>
       <section>
         <h2>Descarga directa</h2>
-        <p>El endpoint <code>GET /api/download</code> acepta dos parámetros:</p>
+        <p>El endpoint <code>POST /api/download</code> acepta un cuerpo JSON:</p>
         <dl>
           <dt>url</dt>
           <dd>Enlace completo del video/audio soportado por yt-dlp.</dd>
           <dt>format</dt>
           <dd>Uno de los formatos listados arriba. Por omisión descarga video.</dd>
         </dl>
-        <pre><code>curl -L "${BASE_URL:-http://localhost:8601}/api/download?url=https://youtu.be/&amp;format=audio" \
-  -o audio.mp3</code></pre>
+        <pre><code>curl -X POST "${BASE_URL:-http://localhost:8601}/api/download" \
+  -H "Content-Type: application/json" \
+  -d '{"url":"https://youtu.be/ID","format":"video_1080"}' \
+  -o video.mp4</code></pre>
         <p>
           Para obtener etiquetas de hablante usa <code>format=transcript_diarized_json</code> o
           <code>format=transcript_diarized_text</code> (requiere whisper-asr configurado como <code>WHISPER_ASR_URL</code>).
@@ -164,7 +166,7 @@
       <section>
         <h2>Inspeccionar sin descargar</h2>
         <p>
-          <code>GET /api/probe?url=...</code> consulta yt-dlp en modo <em>dry-run</em> y devuelve los
+          <code>POST /api/probe</code> consulta yt-dlp en modo <em>dry-run</em> y devuelve los
           metadatos (título, duración, categorías y miniaturas). Es ideal para que otros servicios,
           como bibliotecas multimedia o bots, clasifiquen el contenido sin esperar a la descarga.
         </p>
