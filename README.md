@@ -96,6 +96,7 @@ hacer push a `main`. Esto garantiza que el servicio pueda desplegarse de forma i
 ## Uso de la API (cuerpo JSON)
 
 - Descarga: `POST /api/download` con cuerpo `{"url": "...", "format": "video_1080"}`.
+- Descarga sin caché/metadatos: `POST /api/no-cache` con el mismo cuerpo.
 - Probe: `POST /api/probe` con `{"url": "..."}`.
 - Búsqueda: `POST /api/search` con `{"query": "palabra", "limit": 8}`.
 - Subidas: `POST /api/ffmpeg/upload` y `POST /api/transcribe/upload` siguen usando `multipart/form-data`.

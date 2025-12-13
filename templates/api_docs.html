@@ -140,6 +140,11 @@
   -d '{"url":"https://youtu.be/ID","format":"video_1080"}' \
   -o video.mp4</code></pre>
         <p>
+          Si quieres evitar escritura en la caché y no persistir metadatos, usa
+          <code>POST /api/no-cache</code> con el mismo cuerpo JSON. La descarga se procesa en un directorio temporal
+          y aun así cuenta en las estadísticas de uso.
+        </p>
+        <p>
           Para obtener etiquetas de hablante usa <code>format=transcript_diarized_json</code> o
           <code>format=transcript_diarized_text</code> (requiere whisper-asr configurado como <code>WHISPER_ASR_URL</code>).
           Las traducciones <code>transcript_translate_*</code> también se gestionan vía whisper-asr con destino español.
@@ -161,6 +166,13 @@
         <p>
           El servidor no almacena el archivo original, solo la conversión temporal que se devuelve inmediatamente, y
           aplica los parámetros de ffmpeg predefinidos para cada preset.
+        </p>
+      </section>
+      <section>
+        <h2>Búsqueda</h2>
+        <p>
+          <code>POST /api/search</code> acepta <code>{"query": "texto", "limit": 8}</code> en el cuerpo JSON y devuelve
+          coincidencias rápidas (YouTube y otros servicios soportados por yt-dlp).
         </p>
       </section>
       <section>
