@@ -107,7 +107,7 @@ FFMPEG_HWACCEL_ARGS: List[str] = (
 )
 
 AUDIO_FORMAT_PROFILES = {
-    "audio_high": {
+    "audio_max": {
         "format": "bestaudio/best",
         "passthrough": True,
         "description": "Mejor audio disponible desde la fuente (sin recomprimir)",
@@ -124,7 +124,7 @@ AUDIO_FORMAT_PROFILES = {
     },
 }
 VIDEO_FORMAT_PROFILES = {
-    "video_high": {
+    "video_max": {
         "format": "bv*+ba/b",
         "merge_output_format": "mp4",
         "description": "Video en la mejor calidad disponible desde la fuente",
@@ -145,10 +145,13 @@ VIDEO_FORMAT_PROFILES = {
         "description": "Video comprimido hasta 480p",
     },
 }
-DEFAULT_VIDEO_FORMAT = "video_high"
+DEFAULT_VIDEO_FORMAT = "video_max"
 VIDEO_FORMAT_ALIASES = {
     "video": DEFAULT_VIDEO_FORMAT,
+    "video_high": "video_max",
 }
+for old_audio in ("audio_high",):
+    AUDIO_FORMAT_PROFILES[old_audio] = AUDIO_FORMAT_PROFILES["audio_max"]
 FFMPEG_PRESETS: Dict[str, Dict[str, Any]] = {
     "ffmpeg_480p": {
         "description": "Transcodifica a 480p (h.264 CRF 24 máx. ~1.8 Mbps / AAC 128 kbps)",
@@ -358,7 +361,7 @@ def is_translation_format(media_format: str) -> bool:
 
 FORMAT_DESCRIPTIONS: List[Dict[str, str]] = [
     {
-        "name": "video_high",
+        "name": "video_max",
         "description": "MP4 en la mejor calidad disponible (mezcla best video + best audio)",
     },
     {
@@ -378,7 +381,7 @@ FORMAT_DESCRIPTIONS: List[Dict[str, str]] = [
         "description": "Alias histórico de video_high para compatibilidad",
     },
     {
-        "name": "audio_high",
+        "name": "audio_max",
         "description": "Mejor pista de audio disponible sin recomprimir",
     },
     {
@@ -480,10 +483,11 @@ def is_expired(meta: Dict) -> bool:
 
 FORMAT_EXTENSIONS = {
     "video": ".mp4",
-    "video_high": ".mp4",
+    "video_max": ".mp4",
     "video_med": ".mp4",
     "video_low": ".mp4",
-    "audio_high": ".mp3",
+    "video_1080": ".mp4",
+    "audio_max": ".mp3",
     "audio_med": ".mp3",
     "audio_low": ".mp3",
     "transcript_json": ".json",
@@ -500,6 +504,8 @@ FORMAT_EXTENSIONS = {
 
 for preset_name, preset in FFMPEG_PRESETS.items():
     FORMAT_EXTENSIONS[preset_name] = preset["extension"]
+FORMAT_EXTENSIONS["video_high"] = FORMAT_EXTENSIONS["video_max"]
+FORMAT_EXTENSIONS["audio_high"] = FORMAT_EXTENSIONS["audio_max"]
 
 TRANSCRIPTION_FILE_SUFFIX = ".transcript.json"
 
