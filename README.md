@@ -1,6 +1,6 @@
 # VHS · Video Harvester Service
 
-**Versión**: 0.2.5
+**Versión**: 0.2.6
 
 Servicio FastAPI que descarga, convierte y transcribe vídeos o audios mediante `yt-dlp` y perfiles rápidos de `ffmpeg`. Este directorio está listo para vivir como repositorio independiente y generar su propia imagen de Docker.
 

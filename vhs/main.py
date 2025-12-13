@@ -1089,6 +1089,59 @@ def download_media(url: str, media_format: str) -> Tuple[Path, Dict]:
     return filepath, metadata
 
 
+def download_media_no_cache(url: str, media_format: str) -> Tuple[Path, Dict]:
+    """Descarga sin usar la caché global ni almacenar metadatos persistentes."""
+    normalized_format = normalize_media_format(media_format)
+    temp_dir = Path(tempfile.mkdtemp(prefix="vhs_incognito_"))
+
+    def _run() -> Tuple[Path, Dict]:
+        ydl_opts = build_ydl_options(
+            normalized_format,
+            cache_key_value=cache_key(url, f"{normalized_format}::{random.random()}"),
+            force_no_proxy=False,
+        )
+        # Forzar salida y caché de yt-dlp en el dir temporal para no tocar /.cache ni data/cache
+        ydl_opts["outtmpl"] = str(temp_dir / "%(id)s.%(ext)s")
+        ydl_opts["cachedir"] = str(temp_dir)
+        try:
+            info = extract_info_with_user_agent_retries(
+                url, ydl_opts=ydl_opts, download=True
+            )
+        except Exception as exc:  # pragma: no cover - passthrough
+            cleanup_dir(temp_dir)
+            raise DownloadError(str(exc)) from exc
+
+        requested = info.get("requested_downloads") or []
+        if requested:
+            filepath = Path(requested[0]["filepath"])  # type: ignore[index]
+        elif info.get("_filename"):
+            filepath = Path(info["_filename"])  # type: ignore[index]
+        else:
+            cleanup_dir(temp_dir)
+            raise DownloadError("No se pudo localizar el archivo descargado")
+
+        if not filepath.exists():
+            cleanup_dir(temp_dir)
+            raise DownloadError("No se pudo localizar el archivo descargado")
+
+        meta: Dict[str, Any] = {
+            "title": "no-cache",
+            "filename": filepath.name,
+            "source_url": None,
+            "media_format": normalized_format,
+            "downloaded_at": time.time(),
+            "_no_cache": True,
+        }
+        try:
+            meta["filesize_bytes"] = filepath.stat().st_size
+        except OSError:
+            pass
+        meta.update(_extract_media_stats(info))
+        return filepath, meta
+
+    return _run()
+
+
 def run_ffmpeg(source: Path, destination: Path, args: List[str]) -> None:
     command = [FFMPEG_BINARY, "-y", "-i", str(source), *args, str(destination)]
     try:
@@ -1504,6 +1557,13 @@ def cleanup_path(path: Path) -> None:
         pass
 
 
+def cleanup_dir(path: Path) -> None:
+    try:
+        shutil.rmtree(path, ignore_errors=True)
+    except OSError:
+        pass
+
+
 def convert_uploaded_file_with_ffmpeg(source_path: Path, media_format: str) -> Path:
     preset = FFMPEG_PRESETS.get(media_format)
     if not preset:
@@ -1863,6 +1923,61 @@ async def download_endpoint(
         record_download_event,
         normalized_format,
         bool(metadata.get("_cache_hit")),
+        metadata.get("transcription_stats"),
+        detect_request_source(request),
+    )
+    return response
+
+
+@app.post("/api/no-cache")
+async def no_cache_download_endpoint(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    payload: Dict[str, Any] = Body(..., description="JSON con url y format"),
+):
+    request.state.source = payload.get("source")
+    url = (payload.get("url") or "").strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="Incluye una URL válida en el cuerpo")
+    media_format_raw = payload.get("format") or payload.get("media_format") or DEFAULT_VIDEO_FORMAT
+    format_value = str(media_format_raw).lower()
+    if format_value not in SUPPORTED_MEDIA_FORMATS:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Formato inválido. Usa uno de: "
+                + ", ".join(sorted(SUPPORTED_MEDIA_FORMATS))
+                + "."
+            ),
+        )
+    normalized_format = normalize_media_format(format_value)
+
+    try:
+        file_path, metadata = await run_in_threadpool(
+            download_media_no_cache, url, normalized_format
+        )
+    except DownloadError as exc:
+        await run_in_threadpool(
+            record_error_event, "download_no_cache", detect_request_source(request)
+        )
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    download_name = build_download_name(
+        metadata.get("title", "vhs"), file_path, normalized_format
+    )
+    media_type = media_type_for_format(normalized_format)
+    background_tasks.add_task(cleanup_path, file_path)
+    background_tasks.add_task(cleanup_dir, file_path.parent)
+    response = FileResponse(
+        path=file_path,
+        filename=download_name,
+        media_type=media_type,
+        background=background_tasks,
+    )
+    await run_in_threadpool(
+        record_download_event,
+        normalized_format,
+        False,
         metadata.get("transcription_stats"),
         detect_request_source(request),
     )
