@@ -34,12 +34,20 @@ Los endpoints de conversión y transcripción aceptan los siguientes formatos:
 ## Endpoints principales
 
 ### Descargar o transcribir desde una URL
-`GET /api/download?url=...&format=video_high`
+`POST /api/download`
+
+Body JSON:
+```json
+{
+  "url": "https://...",
+  "media_format": "video_high"
+}
+```
 
 - Acepta cualquiera de los formatos listados arriba (video/audio/ffmpeg/transcripción).
 - Guarda metadatos en caché con resolución (`width`, `height`), bitrates (`video_bitrate_kbps`, `audio_bitrate_kbps`), identificador de formato (`format_id`) y tamaño (`filesize_bytes`).
 - Si la descarga ya existe en caché y no ha expirado, se reutiliza.
-- Para obtener etiquetas de hablante usa `format=transcript_diarized_json` o `format=transcript_diarized_text` (requiere whisper-asr configurado como `WHISPER_ASR_URL`). Las traducciones `transcript_translate_*` se gestionan vía whisper-asr con destino español.
+- Para obtener etiquetas de hablante usa `media_format=transcript_diarized_json` o `media_format=transcript_diarized_text` (requiere whisper-asr configurado como `WHISPER_ASR_URL`). Las traducciones `transcript_translate_*` se gestionan vía whisper-asr con destino español.
 
 ### Recodificar un archivo local con ffmpeg
 `POST /api/ffmpeg/upload`
@@ -55,12 +63,27 @@ Los endpoints de conversión y transcripción aceptan los siguientes formatos:
 - Usa el mismo pipeline de transcripción que el importador remoto y devuelve texto, JSON o SRT según se solicite.
 
 ### Inspeccionar sin descargar
-`GET /api/probe?url=...`
+`POST /api/probe`
+
+Body JSON:
+```json
+{
+  "url": "https://..."
+}
+```
 
 - Ejecuta `yt-dlp` en modo inspección para recuperar título, duración, miniaturas y extractor sin descargar el archivo.
 
 ### Buscar
-`GET /api/search?query=...&limit=8`
+`POST /api/search`
+
+Body JSON:
+```json
+{
+  "query": "...",
+  "limit": 8
+}
+```
 
 - Devuelve resultados planos (id, título, URL) usando `yt-dlp` con búsqueda automática.
 
