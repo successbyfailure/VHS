@@ -11,6 +11,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
+from urllib.parse import quote
 
 import certifi
 from dotenv import load_dotenv
@@ -798,11 +799,30 @@ def summarize_usage(days: int = 7) -> Dict[str, Any]:
 
 
 def build_download_name(title: str, file_path: Path, media_format: str) -> str:
-    base = title.strip().lower() or "vhs"
-    safe = re.sub(r"[^a-z0-9\-_.]+", "_", base)
-    safe = re.sub(r"_+", "_", safe).strip("._") or "vhs"
+    base = title.strip() or "vhs"
+    # Eliminar solo caracteres problemáticos para sistemas de archivos
+    # Mantiene letras Unicode (acentos, ñ, etc.), números, espacios, guiones, etc.
+    safe = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", base)
+    # Reemplazar múltiples espacios/guiones bajos consecutivos por uno solo
+    safe = re.sub(r"[\s_]+", "_", safe).strip("._") or "vhs"
     extension = file_path.suffix or FORMAT_EXTENSIONS.get(media_format, ".bin")
     return f"{safe}{extension}"
+
+
+def build_content_disposition_header(filename: str) -> str:
+    """
+    Construye un header Content-Disposition compatible con RFC 5987
+    que soporta caracteres Unicode.
+    """
+    try:
+        # Intentar codificar como ASCII
+        filename.encode('ascii')
+        # Si es ASCII puro, usar formato simple
+        return f'attachment; filename="{filename}"'
+    except UnicodeEncodeError:
+        # Si tiene caracteres Unicode, usar RFC 5987
+        encoded_filename = quote(filename, safe='')
+        return f"attachment; filename*=utf-8''{encoded_filename}"
 
 
 def load_meta(key: str) -> Optional[Dict]:
@@ -2202,7 +2222,7 @@ async def transcribe_upload(
     transcription_stats = estimate_transcription_stats(payload)
     content = render_transcription_payload(payload, format_value)
     download_name = build_transcription_download_name(file.filename or "transcript", format_value)
-    headers = {"Content-Disposition": f'attachment; filename="{download_name}"'}
+    headers = {"Content-Disposition": build_content_disposition_header(download_name)}
     response = Response(
         content=content,
         media_type=media_type_for_format(format_value),
