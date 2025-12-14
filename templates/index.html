@@ -762,8 +762,20 @@
           progress?.advance('Listando archivo para descarga…');
           const disposition = response.headers.get('Content-Disposition');
           let filename = 'vhs-download';
-          if (disposition && disposition.includes('filename=')) {
-            filename = disposition.split('filename=')[1].replace(/"/g, '');
+          if (disposition) {
+            // RFC 5987: filename*=utf-8''<encoded> (soporta Unicode)
+            const rfc5987Match = disposition.match(/filename\*=utf-8''([^;]+)/i);
+            if (rfc5987Match) {
+              try {
+                filename = decodeURIComponent(rfc5987Match[1]);
+              } catch {
+                filename = rfc5987Match[1]; // Fallback si falla el decode
+              }
+            }
+            // Formato simple: filename="..." (solo ASCII)
+            else if (disposition.includes('filename=')) {
+              filename = disposition.split('filename=')[1].replace(/"/g, '').split(';')[0].trim();
+            }
           }
           triggerBlobDownload(blob, filename);
           statusTarget && (statusTarget.textContent = 'Descarga lista.');
