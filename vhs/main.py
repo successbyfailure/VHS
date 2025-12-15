@@ -3,6 +3,7 @@ import json
 import os
 import random
 import re
+import unicodedata
 import shutil
 import subprocess
 import sys
@@ -809,6 +810,16 @@ def build_download_name(title: str, file_path: Path, media_format: str) -> str:
     return f"{safe}{extension}"
 
 
+def _ascii_filename_fallback(filename: str) -> str:
+    """Genera un nombre ASCII seguro cuando el original tiene Unicode."""
+
+    normalized = unicodedata.normalize("NFKD", filename)
+    stripped = normalized.encode("ascii", "ignore").decode("ascii")
+    safe = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", stripped)
+    safe = re.sub(r"[\s_]+", "_", safe).strip("._") or "vhs"
+    return safe
+
+
 def build_content_disposition_header(filename: str) -> str:
     """
     Construye un header Content-Disposition compatible con RFC 5987
@@ -822,7 +833,12 @@ def build_content_disposition_header(filename: str) -> str:
     except UnicodeEncodeError:
         # Si tiene caracteres Unicode, usar RFC 5987
         encoded_filename = quote(filename, safe='')
-        return f"attachment; filename*=utf-8''{encoded_filename}"
+        ascii_fallback = _ascii_filename_fallback(filename)
+        # Incluir fallback ASCII para clientes (curl -J/-O) que ignoran filename*
+        return (
+            f'attachment; filename="{ascii_fallback}"; '
+            f"filename*=utf-8''{encoded_filename}"
+        )
 
 
 def load_meta(key: str) -> Optional[Dict]:
