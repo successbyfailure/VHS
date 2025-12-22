@@ -489,7 +489,7 @@ FORMAT_EXTENSIONS = {
     "video_med": ".mp4",
     "video_low": ".mp4",
     "video_1080": ".mp4",
-    "audio_max": ".mp3",
+    "audio_max": ".ogg",
     "audio_med": ".mp3",
     "audio_low": ".mp3",
     "transcript_json": ".json",
@@ -529,7 +529,8 @@ def media_type_for_format(media_format: str) -> str:
     if normalized in AUDIO_FORMAT_PROFILES:
         profile = AUDIO_FORMAT_PROFILES[normalized]
         if profile.get("passthrough"):
-            return "audio/*"
+            # audio_max usa OGG/Opus después del remux
+            return "audio/ogg"
         return "audio/mpeg"
     return "video/mp4"
 
@@ -1112,6 +1113,10 @@ def download_media(url: str, media_format: str) -> Tuple[Path, Dict]:
     if not filepath.exists():
         raise DownloadError("No se pudo localizar el archivo descargado")
 
+    # Para audio_max, hacer remux de WebM a OGG (sin recodificar)
+    if normalized_format == "audio_max":
+        filepath = remux_to_ogg(filepath)
+
     title = info.get("title") or "video"
     metadata = {
         "title": title,
@@ -1166,6 +1171,10 @@ def download_media_no_cache(url: str, media_format: str) -> Tuple[Path, Dict]:
             cleanup_dir(temp_dir)
             raise DownloadError("No se pudo localizar el archivo descargado")
 
+        # Para audio_max, hacer remux de WebM a OGG (sin recodificar)
+        if normalized_format == "audio_max":
+            filepath = remux_to_ogg(filepath)
+
         meta: Dict[str, Any] = {
             "title": "no-cache",
             "filename": filepath.name,
@@ -1203,6 +1212,19 @@ def run_ffmpeg(source: Path, destination: Path, args: List[str]) -> None:
         message = (process.stderr or process.stdout or "").strip()
         tail = message.splitlines()[-1] if message else "error desconocido de ffmpeg"
         raise DownloadError(f"ffmpeg no pudo procesar el archivo: {tail}")
+
+
+def remux_to_ogg(source_path: Path) -> Path:
+    """
+    Remux un archivo de audio (típicamente WebM/Opus) a contenedor OGG sin recodificar.
+    Retorna la ruta al nuevo archivo .ogg y elimina el archivo original.
+    """
+    ogg_path = source_path.with_suffix(".ogg")
+    # -c:a copy = copiar audio sin recodificar, -vn = sin video
+    run_ffmpeg(source_path, ogg_path, ["-c:a", "copy", "-vn"])
+    # Eliminar el archivo WebM original
+    cleanup_path(source_path)
+    return ogg_path
 
 
 def process_with_ffmpeg(url: str, media_format: str) -> Tuple[Path, Dict]:
