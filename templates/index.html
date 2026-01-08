@@ -585,6 +585,44 @@
             </div>
           </div>
         </section>
+        <section class="panel">
+          <div class="panel-header">
+            <div>
+              <h2>Estadísticas Totales</h2>
+              <p class="hint">Todas las descargas desde el inicio de los tiempos.</p>
+            </div>
+          </div>
+          <div class="stat-grid">
+            <div class="stat-card">
+              <h3>Descargas Totales</h3>
+              <p id="alltime-download-stats">–</p>
+            </div>
+            <div class="stat-card">
+              <h3>Transcripciones Totales</h3>
+              <p id="alltime-transcribe-stats">–</p>
+            </div>
+            <div class="stat-card">
+              <h3>FFMPEG Totales</h3>
+              <p id="alltime-ffmpeg-stats">–</p>
+            </div>
+            <div class="stat-card">
+              <h3>Procesamiento Total</h3>
+              <p id="alltime-processing-stats">–</p>
+            </div>
+            <div class="stat-card">
+              <h3>Tráfico Total</h3>
+              <p id="alltime-bytes-stats">–</p>
+            </div>
+            <div class="stat-card">
+              <h3>Plataformas</h3>
+              <p id="alltime-providers-stats">–</p>
+            </div>
+            <div class="stat-card">
+              <h3>Errores Totales</h3>
+              <p id="alltime-errors-stats">–</p>
+            </div>
+          </div>
+        </section>
       </section>
       <footer class="footer">
         <p class="hint">
@@ -615,6 +653,13 @@
       const downloadStatsEl = document.getElementById('download-stats');
       const transcribeStatsEl = document.getElementById('transcribe-stats');
       const ffmpegStatsEl = document.getElementById('ffmpeg-stats');
+      const alltimeDownloadStatsEl = document.getElementById('alltime-download-stats');
+      const alltimeTranscribeStatsEl = document.getElementById('alltime-transcribe-stats');
+      const alltimeFfmpegStatsEl = document.getElementById('alltime-ffmpeg-stats');
+      const alltimeProcessingStatsEl = document.getElementById('alltime-processing-stats');
+      const alltimeBytesStatsEl = document.getElementById('alltime-bytes-stats');
+      const alltimeProvidersStatsEl = document.getElementById('alltime-providers-stats');
+      const alltimeErrorsStatsEl = document.getElementById('alltime-errors-stats');
       const progressContainer = document.getElementById('progress');
       const progressLabel = document.getElementById('progress-label');
       const progressFill = document.getElementById('progress-fill');
@@ -1274,6 +1319,86 @@
               .map((entry) => `${entry.error_type}: ${entry.count}`)
               .join(' · ');
             errorsStatsEl.textContent = tops || '–';
+          }
+
+          // Procesar estadísticas all-time (desde el inicio)
+          const alltime = payload.alltime || {};
+          if (alltimeDownloadStatsEl) {
+            const alltimeTotal = alltime.total || 0;
+            const alltimeCacheHits = alltime.cache_hits || 0;
+            const alltimeApi = alltime.api_downloads || 0;
+            const alltimeWeb = alltime.web_downloads || 0;
+            const alltimeOther = alltime.other_downloads || 0;
+            const alltimeDownloadTop =
+              alltime.top_formats?.find((entry) => !String(entry.media_format).startsWith('ffmpeg_')) || null;
+            let txt = `Total ${alltimeTotal.toLocaleString('es-ES')} · Caché ${alltimeCacheHits.toLocaleString('es-ES')} · API ${alltimeApi.toLocaleString('es-ES')} · Web ${alltimeWeb.toLocaleString('es-ES')}`;
+            if (alltimeOther) txt += ` · Otras ${alltimeOther.toLocaleString('es-ES')}`;
+            if (alltimeDownloadTop) txt += ` · Top ${alltimeDownloadTop.media_format} (${alltimeDownloadTop.count})`;
+            alltimeDownloadStatsEl.textContent = txt;
+          }
+          if (alltimeTranscribeStatsEl) {
+            const alltimeTranscriptions = alltime.transcriptions || 0;
+            const alltimeWords = alltime.total_words || 0;
+            const alltimeTokens = alltime.total_tokens || 0;
+            const alltimeTranslations = alltime.translations || 0;
+            const alltimeDiarized = alltime.diarized || 0;
+            const alltimeTranscriptTop =
+              alltime.top_formats?.find((entry) => String(entry.media_format).startsWith('transcript')) || null;
+            let txt = `Total ${alltimeTranscriptions.toLocaleString('es-ES')}`;
+            if (alltimeWords) txt += ` · Palabras ${alltimeWords.toLocaleString('es-ES')}`;
+            if (alltimeTokens && alltimeTokens !== alltimeWords) txt += ` · Tokens ${alltimeTokens.toLocaleString('es-ES')}`;
+            if (alltimeTranscriptTop) txt += ` · Top ${alltimeTranscriptTop.media_format} (${alltimeTranscriptTop.count})`;
+            if (alltimeTranslations) txt += ` · Traducciones ${alltimeTranslations.toLocaleString('es-ES')}`;
+            if (alltimeDiarized) txt += ` · Diarizadas ${alltimeDiarized.toLocaleString('es-ES')}`;
+            alltimeTranscribeStatsEl.textContent = txt;
+          }
+          if (alltimeFfmpegStatsEl) {
+            const alltimeFfmpegRuns = alltime.ffmpeg_runs || 0;
+            const alltimeFfmpegTop =
+              alltime.top_formats?.find((entry) => String(entry.media_format).startsWith('ffmpeg_')) || null;
+            let txt = `Total ${alltimeFfmpegRuns.toLocaleString('es-ES')}`;
+            if (alltimeFfmpegTop) txt += ` · Top ${alltimeFfmpegTop.media_format} (${alltimeFfmpegTop.count})`;
+            alltimeFfmpegStatsEl.textContent = txt;
+          }
+          if (alltimeProcessingStatsEl) {
+            const alltimeProc = alltime.processing || {};
+            const avg = alltimeProc.average_ms ? alltimeProc.average_ms.toFixed(1) : '0';
+            const p95 = alltimeProc.p95_ms ? alltimeProc.p95_ms.toFixed(1) : '0';
+            alltimeProcessingStatsEl.textContent = `Media ${avg} ms · P95 ${p95} ms`;
+          }
+          if (alltimeBytesStatsEl) {
+            const bytesFmt = (val) => {
+              if (!val) return '0 B';
+              const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+              let v = val;
+              let i = 0;
+              while (v >= 1024 && i < units.length - 1) {
+                v /= 1024;
+                i += 1;
+              }
+              return `${v.toFixed(v >= 10 || i === 0 ? 0 : 1)} ${units[i]}`;
+            };
+            const alltimeBytes = alltime.bytes_served || 0;
+            const alltimeCacheBytes = alltime.cache_bytes_saved || 0;
+            alltimeBytesStatsEl.textContent = `Servidos ${bytesFmt(alltimeBytes)} · Ahorro caché ${bytesFmt(alltimeCacheBytes)}`;
+          }
+          if (alltimeProvidersStatsEl) {
+            const alltimeProviders = alltime.providers || {};
+            const entries = Object.entries(alltimeProviders)
+              .sort(([, a], [, b]) => b - a)
+              .map(([name, count]) => `${name}: ${count.toLocaleString('es-ES')}`)
+              .join(' · ');
+            alltimeProvidersStatsEl.textContent = entries || '–';
+          }
+          if (alltimeErrorsStatsEl) {
+            const alltimeErrors = alltime.errors || 0;
+            const alltimeTopErrors = alltime.top_errors || [];
+            const tops = alltimeTopErrors
+              .map((entry) => `${entry.error_type}: ${entry.count}`)
+              .join(' · ');
+            let txt = `Total ${alltimeErrors.toLocaleString('es-ES')}`;
+            if (tops) txt += ` · ${tops}`;
+            alltimeErrorsStatsEl.textContent = txt;
           }
         } catch (error) {
           usageStatusEl.textContent = error.message;
