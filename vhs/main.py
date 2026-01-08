@@ -662,6 +662,7 @@ def summarize_usage(days: int = 7) -> Dict[str, Any]:
             "processing_ms": [],
         }
 
+    # Totales para el período especificado (últimos N días)
     total_downloads = 0
     total_api_downloads = 0
     total_web_downloads = 0
@@ -680,23 +681,99 @@ def summarize_usage(days: int = 7) -> Dict[str, Any]:
     provider_counts: Dict[str, int] = {}
     error_counts: Dict[str, int] = {}
     processing_all: List[float] = []
+
+    # Estadísticas totales desde el inicio de los tiempos (all-time)
+    alltime_downloads = 0
+    alltime_api_downloads = 0
+    alltime_web_downloads = 0
+    alltime_other_downloads = 0
+    alltime_cache_hits = 0
+    alltime_word_count = 0
+    alltime_token_count = 0
+    alltime_recodings = 0
+    alltime_transcriptions = 0
+    alltime_errors = 0
+    alltime_translations = 0
+    alltime_diarized = 0
+    alltime_bytes = 0
+    alltime_cache_bytes_saved = 0
+    alltime_format_totals: Dict[str, int] = {}
+    alltime_provider_counts: Dict[str, int] = {}
+    alltime_error_counts: Dict[str, int] = {}
+    alltime_processing_all: List[float] = []
+
     for event in points:
         timestamp = event.get("timestamp")
         if timestamp is None:
             continue
         event_dt = datetime.fromtimestamp(float(timestamp), tz=timezone.utc)
+
+        # Procesar estadísticas all-time (siempre)
+        source = event.get("source") or "api"
+        if event.get("category") == "error":
+            alltime_errors += 1
+            err_type = event.get("error_type") or "desconocido"
+            alltime_error_counts[err_type] = alltime_error_counts.get(err_type, 0) + 1
+        else:
+            alltime_downloads += 1
+            if source == "web":
+                alltime_web_downloads += 1
+            elif source == "api":
+                alltime_api_downloads += 1
+            else:
+                alltime_other_downloads += 1
+
+            if event.get("cache_hit"):
+                alltime_cache_hits += 1
+
+            word_count = int(event.get("word_count") or 0)
+            token_count = int(event.get("token_count") or 0)
+            alltime_word_count += word_count
+            alltime_token_count += token_count
+
+            media_format = event.get("media_format", "")
+            label = media_format or "desconocido"
+            alltime_format_totals[label] = alltime_format_totals.get(label, 0) + 1
+
+            category = event.get("category") or categorize_media_format(media_format)
+            if category == "recoding":
+                alltime_recodings += 1
+            if category == "transcription":
+                alltime_transcriptions += 1
+                if event.get("translation"):
+                    alltime_translations += 1
+                if event.get("diarization"):
+                    alltime_diarized += 1
+
+            size_bytes = event.get("size_bytes")
+            if isinstance(size_bytes, (int, float)):
+                alltime_bytes += int(size_bytes)
+                if event.get("cache_hit"):
+                    alltime_cache_bytes_saved += int(size_bytes)
+
+            proc = event.get("processing_ms")
+            if isinstance(proc, (int, float)):
+                alltime_processing_all.append(float(proc))
+
+        provider = event.get("provider")
+        if provider:
+            alltime_provider_counts[provider] = alltime_provider_counts.get(provider, 0) + 1
+
+        # Procesar estadísticas del período especificado (últimos N días)
         if event_dt < cutoff:
             continue
+
         day_key = event_dt.date().isoformat()
         if day_key not in aggregates:
             continue
-        source = event.get("source") or "api"
+
         if event.get("category") == "error":
             aggregates[day_key]["errors"] += 1
             total_errors += 1
             err_type = event.get("error_type") or "desconocido"
             error_counts[err_type] = error_counts.get(err_type, 0) + 1
             continue
+
         aggregates[day_key]["downloads"] += 1
         if source == "web":
             aggregates[day_key]["web_downloads"] += 1
@@ -744,7 +821,7 @@ def summarize_usage(days: int = 7) -> Dict[str, Any]:
         proc = event.get("processing_ms")
         if isinstance(proc, (int, float)):
             aggregates[day_key]["processing_ms"].append(float(proc))
-        provider = event.get("provider")
+            processing_all.append(float(proc))
         if provider:
             provider_counts[provider] = provider_counts.get(provider, 0) + 1
 
@@ -762,14 +839,31 @@ def summarize_usage(days: int = 7) -> Dict[str, Any]:
         else:
             day_entry["processing_avg_ms"] = 0.0
             day_entry["processing_p95_ms"] = 0.0
+
+    # Top formats para el período especificado
     top_formats = sorted(
         format_totals.items(), key=lambda item: item[1], reverse=True
     )[:3]
+
+    # Processing summary para el período especificado
     processing_summary = {"average_ms": 0.0, "p95_ms": 0.0}
     if processing_all:
         processing_all.sort()
         processing_summary["average_ms"] = sum(processing_all) / len(processing_all)
         processing_summary["p95_ms"] = processing_all[max(0, int(len(processing_all) * 0.95) - 1)]
+
+    # Top formats all-time
+    alltime_top_formats = sorted(
+        alltime_format_totals.items(), key=lambda item: item[1], reverse=True
+    )[:3]
+
+    # Processing summary all-time
+    alltime_processing_summary = {"average_ms": 0.0, "p95_ms": 0.0}
+    if alltime_processing_all:
+        alltime_processing_all.sort()
+        alltime_processing_summary["average_ms"] = sum(alltime_processing_all) / len(alltime_processing_all)
+        alltime_processing_summary["p95_ms"] = alltime_processing_all[max(0, int(len(alltime_processing_all) * 0.95) - 1)]
+
     return {
         "points": series,
         "total": total_downloads,
@@ -797,6 +891,33 @@ def summarize_usage(days: int = 7) -> Dict[str, Any]:
             for name, count in sorted(error_counts.items(), key=lambda x: x[1], reverse=True)[:3]
         ],
         "days": days,
+        # Estadísticas all-time (desde el inicio)
+        "alltime": {
+            "total": alltime_downloads,
+            "api_downloads": alltime_api_downloads,
+            "web_downloads": alltime_web_downloads,
+            "other_downloads": alltime_other_downloads,
+            "cache_hits": alltime_cache_hits,
+            "total_words": alltime_word_count,
+            "total_tokens": alltime_token_count,
+            "ffmpeg_runs": alltime_recodings,
+            "transcriptions": alltime_transcriptions,
+            "translations": alltime_translations,
+            "diarized": alltime_diarized,
+            "bytes_served": alltime_bytes,
+            "cache_bytes_saved": alltime_cache_bytes_saved,
+            "processing": alltime_processing_summary,
+            "providers": alltime_provider_counts,
+            "errors": alltime_errors,
+            "unique_formats": len(alltime_format_totals),
+            "top_formats": [
+                {"media_format": name, "count": count} for name, count in alltime_top_formats
+            ],
+            "top_errors": [
+                {"error_type": name, "count": count}
+                for name, count in sorted(alltime_error_counts.items(), key=lambda x: x[1], reverse=True)[:3]
+            ],
+        },
     }
 
 
@@ -1989,6 +2110,7 @@ async def download_endpoint(
         bool(metadata.get("_cache_hit")),
         metadata.get("transcription_stats"),
         detect_request_source(request),
+        provider=metadata.get("extractor_key") or metadata.get("extractor"),
     )
     return response
 
@@ -2044,6 +2166,7 @@ async def no_cache_download_endpoint(
         False,
         metadata.get("transcription_stats"),
         detect_request_source(request),
+        provider=metadata.get("extractor_key") or metadata.get("extractor"),
     )
     return response
 
@@ -2130,6 +2253,7 @@ async def download_cached_entry(request: Request, cache_key: str):
         True,
         metadata.get("transcription_stats") if metadata else None,
         detect_request_source(request),
+        provider=metadata.get("extractor_key") or metadata.get("extractor"),
     )
     return response
 
