@@ -1562,11 +1562,12 @@ def _translate_texts_to_spanish(texts: List[str]) -> List[str]:
     client = OpenAI(api_key=TRANSCRIPTION_API_KEY, base_url=TRANSCRIPTION_ENDPOINT)
     results: List[str] = []
     for text in texts:
+        user_content = TRANSLATION_USER_PROMPT_TEMPLATE.format(text=str(text))
         completion = client.chat.completions.create(
             model=model,
             messages=[
-                {"role": "system", "content": "Traduce el siguiente texto al español. Devuelve solo el texto traducido."},
-                {"role": "user", "content": str(text)},
+                {"role": "system", "content": TRANSLATION_SYSTEM_PROMPT},
+                {"role": "user", "content": user_content},
             ],
             temperature=0,
         )
@@ -1831,14 +1832,15 @@ def _whisper_asr_request_params(media_format: str) -> Dict[str, Any]:
     translation = is_translation_format(normalized)
     task = "transcribe"
     output = "json"
-    if normalized in {"transcript_srt", "transcript_translate_srt"}:
+    # Siempre usar JSON para traducción, convertir a SRT después
+    if normalized in {"transcript_srt"} and not translation:
         output = "srt"
     elif normalized in {
         "transcript_text",
         "transcript_diarized_text",
-        "transcript_translate_text",
-        "transcript_translate_diarized_text",
-    }:
+    } and not translation:
+        output = "txt"
+    elif normalized in {"transcript_translate_text", "transcript_translate_diarized_text"}:
         output = "txt"
     params = {"output": output, "task": task, "encode": "true"}
     if diarization:
@@ -2399,3 +2401,14 @@ async def transcribe_upload(
     )
     return response
 TRANSLATION_MODEL = os.getenv("TRANSLATION_MODEL")
+TRANSLATION_SYSTEM_PROMPT = os.getenv(
+    "TRANSLATION_SYSTEM_PROMPT",
+    "Eres un traductor profesional. Tu única tarea es traducir el texto al español de forma directa y precisa. "
+    "NO resumas, NO razones, NO expliques, NO añadas comentarios. "
+    "Mantén el significado exacto, el tono y la estructura del texto original. "
+    "Devuelve ÚNICAMENTE el texto traducido, nada más."
+)
+TRANSLATION_USER_PROMPT_TEMPLATE = os.getenv(
+    "TRANSLATION_USER_PROMPT_TEMPLATE",
+    "Traduce el siguiente texto al español:\n\n{text}"
+)
