@@ -1931,17 +1931,24 @@ def generate_transcription_file(url: str, media_format: str) -> Tuple[Path, Dict
         transcript_payload = translate_transcription_payload(transcript_payload)
     transcription_stats = estimate_transcription_stats(transcript_payload)
 
-    if media_format == "transcript_json":
-        transcript_path = CACHE_DIR / f"{key}{TRANSCRIPTION_FILE_SUFFIX}"
+    # Determinar el formato de salida basado en el sufijo del media_format
+    if media_format.endswith("_json") or media_format == "transcript_json":
+        # Guardar como JSON (incluye translate, diarized, etc.)
+        if media_format == "transcript_json":
+            transcript_path = CACHE_DIR / f"{key}{TRANSCRIPTION_FILE_SUFFIX}"
+        else:
+            transcript_path = CACHE_DIR / f"{key}.json"
         transcript_path.write_text(
             json.dumps(transcript_payload, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
-    elif media_format == "transcript_srt":
+    elif media_format.endswith("_srt") or media_format == "transcript_srt":
+        # Guardar como SRT (incluye translate, diarized, etc.)
         transcript_path = CACHE_DIR / f"{key}.srt"
         srt_content = transcription_payload_to_srt(transcript_payload)
         transcript_path.write_text(srt_content, encoding="utf-8")
     else:
+        # Guardar como texto plano (incluye _text formats)
         text_only = transcript_payload.get("text") or ""
         if not isinstance(text_only, str):
             text_only = str(text_only)

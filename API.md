@@ -14,12 +14,12 @@ Audio:
 - `audio_med`: MP3 a 96 kbps.
 - `audio_low`: MP3 a 48 kbps.
 
-Transcripciones:
+Transcripciones (todos los formatos funcionan correctamente desde v0.2.9):
 - `transcript_json`: salida JSON completa con segmentos y marcas de tiempo.
 - `transcript_text`: solo el texto plano consolidado.
 - `transcript_srt`: archivo SRT listo para reproductores.
 - `transcript_diarized_json`, `transcript_diarized_text`: transcripción con etiquetas de hablante (requiere `WHISPER_ASR_URL` apuntando a whisper-asr).
-- `transcript_translate_json`, `transcript_translate_text`, `transcript_translate_srt`: traducción al español (whisper-asr).
+- `transcript_translate_json`, `transcript_translate_text`, `transcript_translate_srt`: traducción al español (whisper-asr). Los formatos JSON y SRT ahora generan correctamente archivos `.json` y `.srt` respectivamente.
 - `transcript_translate_diarized_json`, `transcript_translate_diarized_text`: traducción al español con etiquetas de hablante (whisper-asr).
 
 ## Perfiles ffmpeg y transcripción local
@@ -101,3 +101,16 @@ Body JSON:
 - Todos los archivos escritos en caché incluyen los campos de resolución, bitrates y `format_id` cuando están disponibles.
 - Las conversiones ffmpeg añaden los objetivos (`target_height`, `target_video_bitrate_kbps`, `target_audio_bitrate_kbps`) y una copia compacta de los metadatos del archivo fuente.
 - Las transcripciones guardan estadísticas (`word_count`, `token_count`) junto al formato solicitado.
+
+## Correcciones en v0.2.9
+
+### Formatos de transcripción corregidos
+
+En versiones anteriores a 0.2.9, algunos formatos de transcripción se guardaban con extensiones incorrectas:
+- `transcript_translate_json` → se guardaba como `.txt` (ahora `.json` ✅)
+- `transcript_translate_srt` → se guardaba como texto plano `.txt` (ahora formato SRT válido `.srt` ✅)
+- `transcript_diarized_json` → se guardaba como `.txt` (ahora `.json` ✅)
+
+**Estado actual**: Todos los formatos de transcripción funcionan correctamente y generan archivos con las extensiones y Content-Types apropiados.
+
+Para más detalles sobre testing y ejemplos de uso, ver `test_data/TRANSCRIPTION_TESTING.md`.

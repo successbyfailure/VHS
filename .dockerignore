@@ -1,5 +1,8 @@
+# Version control
 .git
 .github
+
+# Python artifacts
 __pycache__
 *.py[cod]
 *.pyo
@@ -14,9 +17,30 @@ dist
 .mypy_cache
 .ruff_cache
 .cache
+
+# Environments
 .venv
 .env
 .env.*
+
+# Data and runtime files (not needed in image)
 data
+config
 *.log
+
+# Test data (not needed in production image)
+test_data
+
+# Dependencies
 node_modules
+
+# Editors
+.vscode
+.idea
+.DS_Store
+
+# Documentation (keep in repo, exclude from image to reduce size)
+# Note: README.md may be needed if referenced by the web UI
+AGENTS.md
+API.md
+DOCS.md

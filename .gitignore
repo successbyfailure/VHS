@@ -19,10 +19,14 @@ dist/
 .env
 .env.*
 
+# Data and cache
 data/
+config/
+
+# Test data - exclude everything
+test_data/
 
 # Editors/OS
 .DS_Store
 .idea/
 .vscode/
-config/
