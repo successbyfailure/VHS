@@ -90,7 +90,7 @@ if _raw_extractor_args:
     except json.JSONDecodeError:
         YTDLP_EXTRACTOR_ARGS = {"youtube": [_raw_extractor_args]}
 else:
-    YTDLP_EXTRACTOR_ARGS = {"youtube": ["player_client=android"]}
+    YTDLP_EXTRACTOR_ARGS = {"youtube": ["player_client=default"]}
 TRANSCRIPTION_ENDPOINT = os.getenv("TRANSCRIPTION_ENDPOINT", "https://api.openai.com/v1")
 TRANSCRIPTION_API_KEY = os.getenv("TRANSCRIPTION_API_KEY")
 TRANSCRIPTION_MODEL = os.getenv("TRANSCRIPTION_MODEL", "gpt-4o-mini-transcribe")
