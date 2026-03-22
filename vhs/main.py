@@ -396,43 +396,43 @@ FORMAT_DESCRIPTIONS: List[Dict[str, str]] = [
     },
     {
         "name": "transcript_json",
-        "description": "JSON completo con segmentos y timestamps",
+        "description": "Transcripción detallada con timestamps por segmento (JSON)",
     },
     {
         "name": "transcript_text",
-        "description": "Solo el texto consolidado",
+        "description": "Transcripción en texto plano (TXT)",
     },
     {
         "name": "transcript_srt",
-        "description": "Subtítulos compatibles con reproductores",
+        "description": "Subtítulos sincronizados (SRT)",
     },
     {
         "name": "transcript_diarized_json",
-        "description": "Transcripción JSON con etiquetas de hablante (whisper-asr)",
+        "description": "Transcripción detallada con identificación de hablantes (JSON)",
     },
     {
         "name": "transcript_diarized_text",
-        "description": "Transcripción TXT con etiquetas de hablante (whisper-asr)",
+        "description": "Transcripción en texto plano con identificación de hablantes (TXT)",
     },
     {
         "name": "transcript_translate_json",
-        "description": "Traducción al español en JSON (whisper-asr)",
+        "description": "Transcripción traducida al español con timestamps (JSON)",
     },
     {
         "name": "transcript_translate_text",
-        "description": "Traducción al español en TXT (whisper-asr)",
+        "description": "Transcripción traducida al español en texto plano (TXT)",
     },
     {
         "name": "transcript_translate_srt",
-        "description": "Traducción al español en SRT (whisper-asr)",
+        "description": "Subtítulos sincronizados traducidos al español (SRT)",
     },
     {
         "name": "transcript_translate_diarized_json",
-        "description": "Traducción al español con etiquetas de hablante en JSON (whisper-asr)",
+        "description": "Transcripción traducida al español con identificación de hablantes (JSON)",
     },
     {
         "name": "transcript_translate_diarized_text",
-        "description": "Traducción al español con etiquetas de hablante en TXT (whisper-asr)",
+        "description": "Transcripción traducida al español con identificación de hablantes (TXT)",
     },
 ]
 

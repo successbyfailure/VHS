@@ -30,12 +30,18 @@
         padding: 2rem;
       }
       .card {
-        width: min(720px, 100%);
+        width: min(1024px, 100%);
         background: rgba(15, 23, 42, 0.85);
         border-radius: 18px;
         padding: 2.5rem;
         box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.75);
         backdrop-filter: blur(14px);
+      }
+      .field-row {
+        display: grid;
+        grid-template-columns: 1fr 2fr;
+        gap: 0.75rem;
+        align-items: end;
       }
       .hero {
         display: flex;
@@ -69,7 +75,6 @@
         transform: scale(1.2);
       }
       .hero-actions {
-        display: flex;
         justify-content: flex-end;
         margin: 0.5rem 0 0;
       }
@@ -338,6 +343,14 @@
         .card {
           padding: 1.5rem;
         }
+        .field-row {
+          grid-template-columns: 1fr;
+        }
+      }
+      .hero-actions {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
       }
     </style>
   </head>
@@ -355,7 +368,7 @@
               <span class="version-pill">v{{ vhs_version }}</span>
               {% endif %}
             </h1>
-            <p>
+            <p data-i18n-html="hero-desc">
               VHS es un descargador de videos online con alma ochentera: usa
               <a href="https://github.com/yt-dlp/yt-dlp" target="_blank" rel="noreferrer">yt-dlp</a>
               + <code>ffmpeg</code> para bajar clips, extraer audio, generar transcripciones
@@ -364,11 +377,12 @@
           </div>
         </div>
         <div class="hero-actions">
+          <button id="lang-toggle" class="ghost-button" type="button">EN</button>
           <a class="ghost-button" href="/docs/api">API docs</a>
         </div>
       </header>
       <section class="services">
-        <p class="services-title">Servicios soportados</p>
+        <p class="services-title" data-i18n="services-title">Servicios soportados</p>
         <ul class="services-list">
           {% for service in supported_services %}
           <li class="service-chip">{{ service }}</li>
@@ -377,41 +391,35 @@
         </ul>
       </section>
       <div class="tabs">
-        <button class="tab-button active" data-tab="download-tab">Download</button>
-        <button class="tab-button" data-tab="transcribe-tab">Transcribe</button>
+        <button class="tab-button active" data-tab="download-tab" data-i18n="tab-download">Descargar</button>
+        <button class="tab-button" data-tab="transcribe-tab" data-i18n="tab-transcribe">Transcribir</button>
         <button class="tab-button" data-tab="ffmpeg-tab">FFMPEG</button>
-        <button class="tab-button" data-tab="stats-tab">Stats</button>
+        <button class="tab-button" data-tab="stats-tab" data-i18n="tab-stats">Estadísticas</button>
       </div>
 
       <section class="tab-panel" id="download-tab">
         <form id="download-form">
           <div>
-            <label for="url">URL del video</label>
-            <input type="url" name="url" id="url" placeholder="https://" required />
+            <label for="url" data-i18n="url-label">URL del vídeo</label>
+            <input type="url" name="url" id="url" placeholder="https://" data-i18n-placeholder="url-ph" required />
           </div>
-          <div>
-            <label for="format">Formato</label>
-            <select name="format" id="format">
-              <option value="video_max" selected>Video máxima calidad (mejor disponible)</option>
-              <option value="video_1080">Video 1080p (MP4 hasta 1080p)</option>
-              <option value="video_med">Video web (MP4 hasta 720p)</option>
-              <option value="video_low">Video ligera (MP4 hasta 480p)</option>
-              <option value="audio_max">Audio máxima calidad (fuente)</option>
-              <option value="audio_med">Audio equilibrado (MP3 96 kbps)</option>
-              <option value="audio_low">Audio ligero (MP3 48 kbps)</option>
-              <option value="transcript_json">Transcripción completa (JSON)</option>
-              <option value="transcript_diarized_json">Transcripción diarizada (JSON)</option>
-              <option value="transcript_diarized_text">Transcripción diarizada (TXT)</option>
-              <option value="transcript_translate_json">Traducción al español (JSON)</option>
-              <option value="transcript_translate_text">Traducción al español (TXT)</option>
-              <option value="transcript_translate_srt">Traducción al español (SRT)</option>
-              <option value="transcript_translate_diarized_json">Traducción diarizada al español (JSON)</option>
-              <option value="transcript_translate_diarized_text">Traducción diarizada al español (TXT)</option>
-              <option value="transcript_text">Transcripción (solo texto TXT)</option>
-              <option value="transcript_srt">Subtítulos SRT generados desde la transcripción</option>
-            </select>
+          <div class="field-row">
+            <div>
+              <label for="format-type" data-i18n="type-label">Tipo</label>
+              <select id="format-type">
+                <option value="video" data-i18n="type-video">Video</option>
+                <option value="audio" data-i18n="type-audio">Audio</option>
+                <option value="transcript" data-i18n="type-transcript">Transcripción</option>
+              </select>
+            </div>
+            <div>
+              <label for="format-profile" data-i18n="profile-label">Perfil</label>
+              <select id="format-profile" name="format">
+                <!-- populated by JS based on type selection -->
+              </select>
+            </div>
           </div>
-          <button type="submit">Descargar</button>
+          <button type="submit" data-i18n="btn-download">Descargar</button>
           <div class="progress" id="progress" hidden>
             <p class="progress-label" id="progress-label">Preparando…</p>
             <div class="progress-bar">
@@ -423,12 +431,12 @@
         <section class="panel">
           <div class="panel-header">
             <div>
-              <h2>Descargas en caché</h2>
-              <p class="hint">
+              <h2 data-i18n="cache-title">Descargas en caché</h2>
+              <p class="hint" data-i18n="cache-hint">
                 Reutiliza archivos recientes mientras no expiren. Puedes eliminarlos cuando ya no los necesites.
               </p>
             </div>
-            <button class="ghost-button" id="refresh-cache">Actualizar</button>
+            <button class="ghost-button" id="refresh-cache" data-i18n="btn-refresh">Actualizar</button>
           </div>
           <div id="cache-content" class="cache-list">
             <p class="hint">Cargando caché…</p>
@@ -441,13 +449,13 @@
         <section class="panel">
           <div class="panel-header">
             <div>
-              <h2>Transcribe un archivo local</h2>
-              <p class="hint">Sube audio o video corto y obtén transcripción directa.</p>
+              <h2 data-i18n="transcribe-panel-title">Transcribe un archivo local</h2>
+              <p class="hint" data-i18n="transcribe-panel-hint">Sube audio o video corto y obtén transcripción directa.</p>
             </div>
           </div>
           <form id="upload-form" class="upload-form">
             <div>
-              <label for="upload-file">Archivo</label>
+              <label for="upload-file" data-i18n="label-file">Archivo</label>
               <input
                 type="file"
                 id="upload-file"
@@ -457,21 +465,29 @@
               />
             </div>
             <div>
-              <label for="upload-format">Formato</label>
+              <label for="upload-format" data-i18n="label-format">Formato</label>
               <select name="media_format" id="upload-format">
-                <option value="transcript_text" selected>Transcripción (TXT)</option>
-                <option value="transcript_json">Transcripción completa (JSON)</option>
-                <option value="transcript_diarized_json">Transcripción diarizada (JSON)</option>
-                <option value="transcript_diarized_text">Transcripción diarizada (TXT)</option>
-                <option value="transcript_translate_json">Traducción al español (JSON)</option>
-                <option value="transcript_translate_text">Traducción al español (TXT)</option>
-                <option value="transcript_translate_srt">Traducción al español (SRT)</option>
-                <option value="transcript_translate_diarized_json">Traducción diarizada al español (JSON)</option>
-                <option value="transcript_translate_diarized_text">Traducción diarizada al español (TXT)</option>
-                <option value="transcript_srt">Subtítulos SRT</option>
+                <optgroup label="Básica">
+                  <option value="transcript_text" selected>Texto (TXT)</option>
+                  <option value="transcript_json">Detallado con tiempos (JSON)</option>
+                  <option value="transcript_srt">Subtítulos (SRT)</option>
+                </optgroup>
+                <optgroup label="Con identificación de hablantes">
+                  <option value="transcript_diarized_text">Texto con hablantes (TXT)</option>
+                  <option value="transcript_diarized_json">Detallado con hablantes (JSON)</option>
+                </optgroup>
+                <optgroup label="Traducción al español">
+                  <option value="transcript_translate_text">Texto (TXT)</option>
+                  <option value="transcript_translate_srt">Subtítulos (SRT)</option>
+                  <option value="transcript_translate_json">Detallado con tiempos (JSON)</option>
+                </optgroup>
+                <optgroup label="Traducción al español + hablantes">
+                  <option value="transcript_translate_diarized_text">Texto con hablantes (TXT)</option>
+                  <option value="transcript_translate_diarized_json">Detallado con hablantes (JSON)</option>
+                </optgroup>
               </select>
             </div>
-            <button type="submit">Transcribir archivo</button>
+            <button type="submit" data-i18n="btn-transcribe">Transcribir archivo</button>
             <div class="progress" id="upload-progress" hidden>
               <p class="progress-label" id="upload-progress-label">Preparando…</p>
               <div class="progress-bar">
@@ -488,8 +504,8 @@
         <section class="panel">
           <div class="panel-header">
             <div>
-              <h2>Operaciones con ffmpeg</h2>
-              <p class="hint">
+              <h2 data-i18n="ffmpeg-panel-title">Operaciones con ffmpeg</h2>
+              <p class="hint" data-i18n-html="ffmpeg-panel-hint">
                 Convierte un archivo local con los presets <code>ffmpeg_*</code>. Ideal para generar masters ligeros sin
                 salir del navegador.
               </p>
@@ -497,7 +513,7 @@
           </div>
           <form id="ffmpeg-form" class="upload-form">
             <div>
-              <label for="ffmpeg-file">Archivo</label>
+              <label for="ffmpeg-file" data-i18n="label-file">Archivo</label>
               <input
                 type="file"
                 id="ffmpeg-file"
@@ -507,21 +523,12 @@
               />
             </div>
             <div>
-              <label for="ffmpeg-format">Perfil ffmpeg</label>
+              <label for="ffmpeg-format" data-i18n="label-ffmpeg-profile">Perfil ffmpeg</label>
               <select name="media_format" id="ffmpeg-format">
-                <option value="ffmpeg_mp3-192" selected>ffmpeg_mp3-192 · MP3 a 192 kbps</option>
-                <option value="ffmpeg_mp3-128">ffmpeg_mp3-128 · MP3 a 128 kbps</option>
-                <option value="ffmpeg_mp3-96">ffmpeg_mp3-96 · MP3 a 96 kbps</option>
-                <option value="ffmpeg_mp3-64">ffmpeg_mp3-64 · MP3 a 64 kbps</option>
-                <option value="ffmpeg_wav">ffmpeg_wav · WAV sin pérdidas</option>
-                <option value="ffmpeg_480p">ffmpeg_480p · Video ligero a 480p</option>
-                <option value="ffmpeg_720p">ffmpeg_720p · Video optimizado a 720p</option>
-                <option value="ffmpeg_1080p">ffmpeg_1080p · Copia equilibrada a 1080p</option>
-                <option value="ffmpeg_1440p">ffmpeg_1440p · Recodifica video a 1440p</option>
-                <option value="ffmpeg_3840p">ffmpeg_3840p · Master 4K</option>
+                <!-- populated by JS with bilingual labels -->
               </select>
             </div>
-            <button type="submit">Convertir archivo con ffmpeg</button>
+            <button type="submit" data-i18n="btn-ffmpeg">Convertir archivo con ffmpeg</button>
             <div class="progress" id="ffmpeg-progress" hidden>
               <p class="progress-label" id="ffmpeg-progress-label">Preparando…</p>
               <div class="progress-bar">
@@ -538,8 +545,8 @@
         <section class="panel">
           <div class="panel-header">
             <div>
-              <h2>Actividad global</h2>
-              <p class="hint">Descargas, transcripciones, ffmpeg y salud del servicio.</p>
+              <h2 data-i18n="stats-global-title">Actividad global</h2>
+              <p class="hint" data-i18n="stats-global-hint">Descargas, transcripciones, ffmpeg y salud del servicio.</p>
             </div>
             <p class="panel-status" id="usage-status"></p>
           </div>
@@ -550,17 +557,17 @@
         <section class="panel">
           <div class="panel-header">
             <div>
-              <h2>Resumen</h2>
-              <p class="hint">Totales, proveedores y errores recientes.</p>
+              <h2 data-i18n="stats-summary-title">Resumen</h2>
+              <p class="hint" data-i18n="stats-summary-hint">Totales, proveedores y errores recientes.</p>
             </div>
           </div>
           <div class="stat-grid">
             <div class="stat-card">
-              <h3>Descargas</h3>
+              <h3 data-i18n="stat-downloads">Descargas</h3>
               <p id="download-stats">–</p>
             </div>
             <div class="stat-card">
-              <h3>Transcripciones</h3>
+              <h3 data-i18n="stat-transcriptions">Transcripciones</h3>
               <p id="transcribe-stats">–</p>
             </div>
             <div class="stat-card">
@@ -568,19 +575,19 @@
               <p id="ffmpeg-stats">–</p>
             </div>
             <div class="stat-card">
-              <h3>Procesamiento</h3>
+              <h3 data-i18n="stat-processing">Procesamiento</h3>
               <p id="processing-stats">–</p>
             </div>
             <div class="stat-card">
-              <h3>Tráfico</h3>
+              <h3 data-i18n="stat-traffic">Tráfico</h3>
               <p id="bytes-stats">–</p>
             </div>
             <div class="stat-card">
-              <h3>Proveedores</h3>
+              <h3 data-i18n="stat-providers">Proveedores</h3>
               <p id="providers-stats">–</p>
             </div>
             <div class="stat-card">
-              <h3>Errores</h3>
+              <h3 data-i18n="stat-errors">Errores</h3>
               <p id="errors-stats">–</p>
             </div>
           </div>
@@ -588,47 +595,47 @@
         <section class="panel">
           <div class="panel-header">
             <div>
-              <h2>Estadísticas Totales</h2>
-              <p class="hint">Todas las descargas desde el inicio de los tiempos.</p>
+              <h2 data-i18n="stats-alltime-title">Estadísticas Totales</h2>
+              <p class="hint" data-i18n="stats-alltime-hint">Todas las descargas desde el inicio de los tiempos.</p>
             </div>
           </div>
           <div class="stat-grid">
             <div class="stat-card">
-              <h3>Descargas Totales</h3>
+              <h3 data-i18n="stat-alltime-downloads">Descargas Totales</h3>
               <p id="alltime-download-stats">–</p>
             </div>
             <div class="stat-card">
-              <h3>Transcripciones Totales</h3>
+              <h3 data-i18n="stat-alltime-transcriptions">Transcripciones Totales</h3>
               <p id="alltime-transcribe-stats">–</p>
             </div>
             <div class="stat-card">
-              <h3>FFMPEG Totales</h3>
+              <h3 data-i18n="stat-alltime-ffmpeg">FFMPEG Totales</h3>
               <p id="alltime-ffmpeg-stats">–</p>
             </div>
             <div class="stat-card">
-              <h3>Procesamiento Total</h3>
+              <h3 data-i18n="stat-alltime-processing">Procesamiento Total</h3>
               <p id="alltime-processing-stats">–</p>
             </div>
             <div class="stat-card">
-              <h3>Tráfico Total</h3>
+              <h3 data-i18n="stat-alltime-traffic">Tráfico Total</h3>
               <p id="alltime-bytes-stats">–</p>
             </div>
             <div class="stat-card">
-              <h3>Plataformas</h3>
+              <h3 data-i18n="stat-alltime-providers">Plataformas</h3>
               <p id="alltime-providers-stats">–</p>
             </div>
             <div class="stat-card">
-              <h3>Errores Totales</h3>
+              <h3 data-i18n="stat-alltime-errors">Errores Totales</h3>
               <p id="alltime-errors-stats">–</p>
             </div>
           </div>
         </section>
       </section>
       <footer class="footer">
-        <p class="hint">
+        <p class="hint" data-i18n="footer-cache">
           Guardamos tus descargas 24 h en una caché VHS auténtica: rebobina, repite y colecciona como si fuera 1994.
         </p>
-        <p class="hint">
+        <p class="hint" data-i18n="footer-legal">
           Aviso legal no-legal: si al darle a «Descargar» tu PC se autodestruye, tu gato habla latín o se rasga el tejido del espacio-tiempo… no es cosa nuestra.
         </p>
       </footer>
@@ -673,8 +680,310 @@
       const uploadProgressFill = document.getElementById('upload-progress-fill');
       const uploadFileInput = document.getElementById('upload-file');
       const uploadFormatSelect = document.getElementById('upload-format');
+      const formatTypeSelect = document.getElementById('format-type');
+      const formatProfileSelect = document.getElementById('format-profile');
       let usageChart;
       const tabs = document.querySelectorAll('.tab-button');
+
+      // ── Language / i18n ─────────────────────────────────────────────────────
+      const TRANSLATIONS = {
+        es: {
+          'hero-desc': 'VHS es un descargador de videos online con alma ochentera: usa <a href="https://github.com/yt-dlp/yt-dlp" target="_blank" rel="noreferrer">yt-dlp</a> + <code>ffmpeg</code> para bajar clips, extraer audio, generar transcripciones y subtítulos, o recodificar ficheros sin despeinarte.',
+          'services-title': 'Servicios soportados',
+          'tab-download': 'Descargar', 'tab-transcribe': 'Transcribir', 'tab-stats': 'Estadísticas',
+          'url-label': 'URL del vídeo', 'url-ph': 'https://',
+          'type-label': 'Tipo', 'type-video': 'Video', 'type-audio': 'Audio', 'type-transcript': 'Transcripción',
+          'profile-label': 'Perfil', 'btn-download': 'Descargar',
+          'cache-title': 'Descargas en caché',
+          'cache-hint': 'Reutiliza archivos recientes mientras no expiren. Puedes eliminarlos cuando ya no los necesites.',
+          'btn-refresh': 'Actualizar',
+          'transcribe-panel-title': 'Transcribe un archivo local',
+          'transcribe-panel-hint': 'Sube audio o video corto y obtén transcripción directa.',
+          'label-file': 'Archivo', 'label-format': 'Formato', 'btn-transcribe': 'Transcribir archivo',
+          'ffmpeg-panel-title': 'Operaciones con ffmpeg',
+          'ffmpeg-panel-hint': 'Convierte un archivo local con los presets <code>ffmpeg_*</code>. Ideal para generar masters ligeros sin salir del navegador.',
+          'label-ffmpeg-profile': 'Perfil ffmpeg', 'btn-ffmpeg': 'Convertir archivo con ffmpeg',
+          'stats-global-title': 'Actividad global', 'stats-global-hint': 'Descargas, transcripciones, ffmpeg y salud del servicio.',
+          'stats-summary-title': 'Resumen', 'stats-summary-hint': 'Totales, proveedores y errores recientes.',
+          'stat-downloads': 'Descargas', 'stat-transcriptions': 'Transcripciones', 'stat-processing': 'Procesamiento',
+          'stat-traffic': 'Tráfico', 'stat-providers': 'Proveedores', 'stat-errors': 'Errores',
+          'stats-alltime-title': 'Estadísticas Totales', 'stats-alltime-hint': 'Todas las descargas desde el inicio de los tiempos.',
+          'stat-alltime-downloads': 'Descargas Totales', 'stat-alltime-transcriptions': 'Transcripciones Totales',
+          'stat-alltime-ffmpeg': 'FFMPEG Totales', 'stat-alltime-processing': 'Procesamiento Total',
+          'stat-alltime-traffic': 'Tráfico Total', 'stat-alltime-providers': 'Plataformas', 'stat-alltime-errors': 'Errores Totales',
+          'footer-cache': 'Guardamos tus descargas 24 h en una caché VHS auténtica: rebobina, repite y colecciona como si fuera 1994.',
+          'footer-legal': 'Aviso legal no-legal: si al darle a «Descargar» tu PC se autodestruye, tu gato habla latín o se rasga el tejido del espacio-tiempo… no es cosa nuestra.',
+          progressDefault: ['Preparando solicitud…', 'Descargando archivo…', 'Completando descarga…'],
+          progressTranscript: ['Preparando audio…', 'Solicitando transcripción…', 'Construyendo subtítulos…', 'Empaquetando archivo final…'],
+          progressFfmpeg: ['Preparando archivo local…', 'Subiendo archivo…', 'Convirtiendo con ffmpeg…', 'Empaquetando descarga…'],
+          'msg-connecting': 'Conectando con el servidor…', 'msg-sending': 'Enviando solicitud…',
+          'msg-downloading': 'Descargando datos…', 'msg-preparing-file': 'Listando archivo para descarga…',
+          'msg-done-status': 'Descarga lista.', 'msg-done-progress': 'Archivo listo para guardar.',
+          'msg-error-network': 'No se pudo contactar con el servidor. Revisa la conexión o si hay un bloqueador en la red.',
+          'msg-error-default': 'Ha ocurrido un error inesperado.', 'msg-no-file': 'Selecciona un archivo válido.',
+          'msg-computing': 'Calculando actividad…', 'msg-updating-cache': 'Actualizando…',
+          'msg-error-fetch-cache': 'No se pudo obtener la caché', 'msg-error-fetch-activity': 'No se pudo obtener la actividad',
+          'msg-error-delete-cache': 'No se pudo eliminar el archivo de la caché', 'msg-deleted-ok': 'Elemento eliminado.',
+          'msg-no-cache': 'No hay elementos recientes en la caché.', 'msg-download-title-default': 'Descarga',
+          'msg-getting-from-cache': 'Obteniendo archivo desde la caché…',
+          'msg-deleting': (n) => `Eliminando «${n}»…`,
+          'cache-meta-format': 'Formato', 'cache-meta-size': 'Peso', 'cache-meta-age': 'Edad',
+          'cache-btn-redownload': 'Volver a descargar', 'cache-btn-source': 'Ver origen', 'cache-btn-delete': 'Eliminar caché',
+          'cache-stats': (count, bytes, ttl) => `Elementos: ${count} · ${bytes} en caché · TTL ${ttl} h`,
+          'age-just': 'recién descargado',
+          'chart-downloads': 'Descargas', 'chart-api': 'Descargas API', 'chart-web': 'Descargas web',
+          'chart-other': 'Descargas otras', 'chart-cache': 'Aciertos caché', 'chart-words': 'Palabras transcritas',
+          'chart-recodings': 'Recodificaciones ffmpeg', 'chart-transcriptions': 'Transcripciones listas',
+          'chart-translations': 'Traducciones', 'chart-diarized': 'Diarizadas', 'chart-errors': 'Errores',
+          'lbl-downloads': 'Descargas', 'lbl-cache': 'Caché', 'lbl-api': 'API', 'lbl-web': 'Web',
+          'lbl-other': 'Otras', 'lbl-top': 'Top formato', 'lbl-words': 'Palabras', 'lbl-tokens': 'Tokens',
+          'lbl-errors': 'Errores', 'lbl-translations': 'Traducciones', 'lbl-diarized': 'Diarizadas',
+          'lbl-transcriptions': 'Transcripciones', 'lbl-recodings': 'Recodificaciones ffmpeg',
+          'lbl-avg': 'Media', 'lbl-p95': 'P95', 'lbl-served': 'Servidos', 'lbl-cache-saving': 'Ahorro caché',
+          'lbl-last-days': (d, tot, api, web) => `Últimos ${d} días: ${tot} descargas (API: ${api} · Web: ${web})`,
+          'lbl-from-cache': 'desde caché', 'lbl-in-cache': 'en caché',
+          'locale': 'es-ES',
+        },
+        en: {
+          'hero-desc': 'VHS is an online video downloader with an 80s soul: it uses <a href="https://github.com/yt-dlp/yt-dlp" target="_blank" rel="noreferrer">yt-dlp</a> + <code>ffmpeg</code> to download clips, extract audio, generate transcriptions and subtitles, or re-encode files without breaking a sweat.',
+          'services-title': 'Supported services',
+          'tab-download': 'Download', 'tab-transcribe': 'Transcribe', 'tab-stats': 'Stats',
+          'url-label': 'Video URL', 'url-ph': 'https://',
+          'type-label': 'Type', 'type-video': 'Video', 'type-audio': 'Audio', 'type-transcript': 'Transcription',
+          'profile-label': 'Profile', 'btn-download': 'Download',
+          'cache-title': 'Cached downloads',
+          'cache-hint': 'Reuse recent files before they expire. Delete them when you no longer need them.',
+          'btn-refresh': 'Refresh',
+          'transcribe-panel-title': 'Transcribe a local file',
+          'transcribe-panel-hint': 'Upload a short audio or video and get a direct transcription.',
+          'label-file': 'File', 'label-format': 'Format', 'btn-transcribe': 'Transcribe file',
+          'ffmpeg-panel-title': 'ffmpeg operations',
+          'ffmpeg-panel-hint': 'Convert a local file using <code>ffmpeg_*</code> presets. Great for lightweight masters without leaving the browser.',
+          'label-ffmpeg-profile': 'ffmpeg preset', 'btn-ffmpeg': 'Convert file with ffmpeg',
+          'stats-global-title': 'Global activity', 'stats-global-hint': 'Downloads, transcriptions, ffmpeg and service health.',
+          'stats-summary-title': 'Summary', 'stats-summary-hint': 'Totals, providers and recent errors.',
+          'stat-downloads': 'Downloads', 'stat-transcriptions': 'Transcriptions', 'stat-processing': 'Processing',
+          'stat-traffic': 'Traffic', 'stat-providers': 'Providers', 'stat-errors': 'Errors',
+          'stats-alltime-title': 'All-time stats', 'stats-alltime-hint': 'Every download since the beginning of time.',
+          'stat-alltime-downloads': 'Total downloads', 'stat-alltime-transcriptions': 'Total transcriptions',
+          'stat-alltime-ffmpeg': 'Total FFMPEG', 'stat-alltime-processing': 'Total processing',
+          'stat-alltime-traffic': 'Total traffic', 'stat-alltime-providers': 'Platforms', 'stat-alltime-errors': 'Total errors',
+          'footer-cache': "We cache your downloads for 24 h in an authentic VHS tape: rewind, replay and collect like it's 1994.",
+          'footer-legal': "Non-legal legal notice: if clicking «Download» causes your PC to self-destruct, your cat to speak Latin, or the space-time fabric to tear… that's on you.",
+          progressDefault: ['Preparing request…', 'Downloading file…', 'Completing download…'],
+          progressTranscript: ['Preparing audio…', 'Requesting transcription…', 'Building subtitles…', 'Packaging final file…'],
+          progressFfmpeg: ['Preparing local file…', 'Uploading file…', 'Converting with ffmpeg…', 'Packaging download…'],
+          'msg-connecting': 'Connecting to server…', 'msg-sending': 'Sending request…',
+          'msg-downloading': 'Downloading data…', 'msg-preparing-file': 'Preparing file for download…',
+          'msg-done-status': 'Download ready.', 'msg-done-progress': 'File ready to save.',
+          'msg-error-network': 'Could not reach the server. Check your connection or if a network blocker is active.',
+          'msg-error-default': 'An unexpected error occurred.', 'msg-no-file': 'Please select a valid file.',
+          'msg-computing': 'Computing activity…', 'msg-updating-cache': 'Refreshing…',
+          'msg-error-fetch-cache': 'Could not fetch cache', 'msg-error-fetch-activity': 'Could not fetch activity',
+          'msg-error-delete-cache': 'Could not delete from cache', 'msg-deleted-ok': 'Entry deleted.',
+          'msg-no-cache': 'No recent items in cache.', 'msg-download-title-default': 'Download',
+          'msg-getting-from-cache': 'Fetching file from cache…',
+          'msg-deleting': (n) => `Deleting "${n}"…`,
+          'cache-meta-format': 'Format', 'cache-meta-size': 'Size', 'cache-meta-age': 'Age',
+          'cache-btn-redownload': 'Download again', 'cache-btn-source': 'View source', 'cache-btn-delete': 'Delete cache',
+          'cache-stats': (count, bytes, ttl) => `Items: ${count} · ${bytes} in cache · TTL ${ttl} h`,
+          'age-just': 'just downloaded',
+          'chart-downloads': 'Downloads', 'chart-api': 'API downloads', 'chart-web': 'Web downloads',
+          'chart-other': 'Other downloads', 'chart-cache': 'Cache hits', 'chart-words': 'Transcribed words',
+          'chart-recodings': 'ffmpeg re-encodes', 'chart-transcriptions': 'Completed transcriptions',
+          'chart-translations': 'Translations', 'chart-diarized': 'Diarized', 'chart-errors': 'Errors',
+          'lbl-downloads': 'Downloads', 'lbl-cache': 'Cache', 'lbl-api': 'API', 'lbl-web': 'Web',
+          'lbl-other': 'Other', 'lbl-top': 'Top format', 'lbl-words': 'Words', 'lbl-tokens': 'Tokens',
+          'lbl-errors': 'Errors', 'lbl-translations': 'Translations', 'lbl-diarized': 'Diarized',
+          'lbl-transcriptions': 'Transcriptions', 'lbl-recodings': 'ffmpeg re-encodes',
+          'lbl-avg': 'Avg', 'lbl-p95': 'P95', 'lbl-served': 'Served', 'lbl-cache-saving': 'Cache savings',
+          'lbl-last-days': (d, tot, api, web) => `Last ${d} days: ${tot} downloads (API: ${api} · Web: ${web})`,
+          'lbl-from-cache': 'from cache', 'lbl-in-cache': 'in cache',
+          'locale': 'en-US',
+        },
+      };
+
+      const FORMAT_PROFILES = {
+        video: [
+          { value: 'video_max', es: 'Máxima calidad (mejor disponible)', en: 'Maximum quality (best available)' },
+          { value: 'video_1080', es: 'Alta — hasta 1080p', en: 'High — up to 1080p' },
+          { value: 'video_med', es: 'Web — hasta 720p', en: 'Web — up to 720p' },
+          { value: 'video_low', es: 'Ligero — hasta 480p', en: 'Light — up to 480p' },
+        ],
+        audio: [
+          { value: 'audio_max', es: 'Máxima calidad (sin recomprimir)', en: 'Maximum quality (no re-encode)' },
+          { value: 'audio_med', es: 'Equilibrado — MP3 96 kbps', en: 'Balanced — MP3 96 kbps' },
+          { value: 'audio_low', es: 'Ligero — MP3 48 kbps', en: 'Light — MP3 48 kbps' },
+        ],
+        transcript: [
+          {
+            es: 'Básica', en: 'Basic',
+            options: [
+              { value: 'transcript_text', es: 'Texto (TXT)', en: 'Plain text (TXT)' },
+              { value: 'transcript_json', es: 'Detallado con tiempos (JSON)', en: 'Detailed with timestamps (JSON)' },
+              { value: 'transcript_srt', es: 'Subtítulos (SRT)', en: 'Subtitles (SRT)' },
+            ],
+          },
+          {
+            es: 'Con identificación de hablantes', en: 'With speaker identification',
+            options: [
+              { value: 'transcript_diarized_text', es: 'Texto con hablantes (TXT)', en: 'Text with speakers (TXT)' },
+              { value: 'transcript_diarized_json', es: 'Detallado con hablantes (JSON)', en: 'Detailed with speakers (JSON)' },
+            ],
+          },
+          {
+            es: 'Traducción al español', en: 'Translation to Spanish',
+            options: [
+              { value: 'transcript_translate_text', es: 'Texto (TXT)', en: 'Plain text (TXT)' },
+              { value: 'transcript_translate_srt', es: 'Subtítulos (SRT)', en: 'Subtitles (SRT)' },
+              { value: 'transcript_translate_json', es: 'Detallado con tiempos (JSON)', en: 'Detailed with timestamps (JSON)' },
+            ],
+          },
+          {
+            es: 'Traducción al español + hablantes', en: 'Translation to Spanish + speakers',
+            options: [
+              { value: 'transcript_translate_diarized_text', es: 'Texto con hablantes (TXT)', en: 'Text with speakers (TXT)' },
+              { value: 'transcript_translate_diarized_json', es: 'Detallado con hablantes (JSON)', en: 'Detailed with speakers (JSON)' },
+            ],
+          },
+        ],
+      };
+
+      const FFMPEG_OPTIONS = [
+        { value: 'ffmpeg_mp3-192', es: 'MP3 a 192 kbps', en: 'MP3 at 192 kbps' },
+        { value: 'ffmpeg_mp3-128', es: 'MP3 a 128 kbps', en: 'MP3 at 128 kbps' },
+        { value: 'ffmpeg_mp3-96',  es: 'MP3 a 96 kbps',  en: 'MP3 at 96 kbps' },
+        { value: 'ffmpeg_mp3-64',  es: 'MP3 a 64 kbps',  en: 'MP3 at 64 kbps' },
+        { value: 'ffmpeg_wav',     es: 'WAV sin pérdidas', en: 'WAV lossless' },
+        { value: 'ffmpeg_480p',    es: 'Video ligero a 480p', en: 'Lightweight video at 480p' },
+        { value: 'ffmpeg_720p',    es: 'Video optimizado a 720p', en: 'Optimised video at 720p' },
+        { value: 'ffmpeg_1080p',   es: 'Copia equilibrada a 1080p', en: 'Balanced encode at 1080p' },
+        { value: 'ffmpeg_1440p',   es: 'Recodifica video a 1440p', en: 'Re-encode video at 1440p' },
+        { value: 'ffmpeg_3840p',   es: 'Master 4K', en: '4K master' },
+      ];
+
+      let currentLang = (() => {
+        const stored = localStorage.getItem('vhs-lang');
+        if (stored === 'es' || stored === 'en') return stored;
+        return navigator.language?.startsWith('en') ? 'en' : 'es';
+      })();
+
+      function t(key) {
+        const val = TRANSLATIONS[currentLang]?.[key] ?? TRANSLATIONS.es[key];
+        return val ?? key;
+      }
+      function locale() { return t('locale'); }
+
+      function applyTranslations() {
+        document.documentElement.lang = currentLang;
+        document.querySelectorAll('[data-i18n]').forEach((el) => {
+          const val = t(el.dataset.i18n);
+          if (typeof val === 'string') el.textContent = val;
+        });
+        document.querySelectorAll('[data-i18n-html]').forEach((el) => {
+          const val = t(el.dataset.i18nHtml);
+          if (typeof val === 'string') el.innerHTML = val;
+        });
+        document.querySelectorAll('[data-i18n-placeholder]').forEach((el) => {
+          const val = t(el.dataset.i18nPlaceholder);
+          if (typeof val === 'string') el.placeholder = val;
+        });
+        const langBtn = document.getElementById('lang-toggle');
+        if (langBtn) langBtn.textContent = currentLang === 'es' ? 'EN' : 'ES';
+      }
+
+      function populateFormatProfiles(type) {
+        const savedValue = formatProfileSelect?.value;
+        if (!formatProfileSelect) return;
+        formatProfileSelect.innerHTML = '';
+        const profiles = FORMAT_PROFILES[type] || [];
+        for (const item of profiles) {
+          if (item.options) {
+            const group = document.createElement('optgroup');
+            group.label = item[currentLang] || item.es;
+            for (const opt of item.options) {
+              const option = document.createElement('option');
+              option.value = opt.value;
+              option.textContent = opt[currentLang] || opt.es;
+              if (opt.value === savedValue) option.selected = true;
+              group.appendChild(option);
+            }
+            formatProfileSelect.appendChild(group);
+          } else {
+            const option = document.createElement('option');
+            option.value = item.value;
+            option.textContent = item[currentLang] || item.es;
+            if (item.value === savedValue) option.selected = true;
+            formatProfileSelect.appendChild(option);
+          }
+        }
+      }
+
+      function rebuildUploadFormat() {
+        if (!uploadFormatSelect) return;
+        const savedValue = uploadFormatSelect.value;
+        uploadFormatSelect.innerHTML = '';
+        for (const group of FORMAT_PROFILES.transcript) {
+          const optgroup = document.createElement('optgroup');
+          optgroup.label = group[currentLang] || group.es;
+          for (const opt of group.options) {
+            const option = document.createElement('option');
+            option.value = opt.value;
+            option.textContent = opt[currentLang] || opt.es;
+            if (opt.value === savedValue) option.selected = true;
+            optgroup.appendChild(option);
+          }
+          uploadFormatSelect.appendChild(optgroup);
+        }
+        if (!uploadFormatSelect.value) {
+          const first = uploadFormatSelect.querySelector('option');
+          if (first) first.selected = true;
+        }
+      }
+
+      function rebuildFfmpegFormat() {
+        if (!ffmpegFormatSelect) return;
+        const savedValue = ffmpegFormatSelect.value;
+        ffmpegFormatSelect.innerHTML = '';
+        for (const opt of FFMPEG_OPTIONS) {
+          const option = document.createElement('option');
+          option.value = opt.value;
+          option.textContent = `${opt.value} · ${opt[currentLang] || opt.es}`;
+          if (opt.value === savedValue) option.selected = true;
+          ffmpegFormatSelect.appendChild(option);
+        }
+        if (!ffmpegFormatSelect.value) {
+          const first = ffmpegFormatSelect.querySelector('option');
+          if (first) first.selected = true;
+        }
+      }
+
+      function setLanguage(lang) {
+        currentLang = lang;
+        localStorage.setItem('vhs-lang', lang);
+        applyTranslations();
+        populateFormatProfiles(formatTypeSelect?.value || 'video');
+        rebuildUploadFormat();
+        rebuildFfmpegFormat();
+        if (usageChart) {
+          usageChart.data.datasets.forEach((ds, i) => {
+            const keys = ['chart-downloads','chart-api','chart-web','chart-other','chart-cache','chart-words','chart-recodings','chart-transcriptions','chart-translations','chart-diarized','chart-errors'];
+            if (keys[i]) ds.label = t(keys[i]);
+          });
+          usageChart.update();
+        }
+      }
+
+      document.getElementById('lang-toggle')?.addEventListener('click', () => {
+        setLanguage(currentLang === 'es' ? 'en' : 'es');
+      });
+
+      // initialise selects and apply translations on load
+      formatTypeSelect?.addEventListener('change', () => populateFormatProfiles(formatTypeSelect.value));
+      populateFormatProfiles(formatTypeSelect?.value || 'video');
+      rebuildUploadFormat();
+      rebuildFfmpegFormat();
+      applyTranslations();
       const panels = document.querySelectorAll('.tab-panel');
 
       function activateTab(tabId) {
@@ -695,21 +1004,13 @@
       });
       activateTab('download-tab');
 
-      const PROGRESS_STEPS = {
-        default: ['Preparando solicitud…', 'Descargando archivo…', 'Completando descarga…'],
-        transcription: [
-          'Preparando audio…',
-          'Solicitando transcripción…',
-          'Construyendo subtítulos…',
-          'Empaquetando archivo final…',
-        ],
-        ffmpeg: [
-          'Preparando archivo local…',
-          'Subiendo archivo…',
-          'Convirtiendo con ffmpeg…',
-          'Empaquetando descarga…',
-        ],
-      };
+      function getProgressSteps() {
+        return {
+          default: t('progressDefault'),
+          transcription: t('progressTranscript'),
+          ffmpeg: t('progressFfmpeg'),
+        };
+      }
 
       function createProgressTracker(container, labelEl, fillEl) {
         let steps = [];
@@ -727,7 +1028,7 @@
           fillEl.classList.remove('error');
           container.hidden = false;
           fillEl.style.width = steps.length ? '5%' : '0%';
-          labelEl.textContent = steps[0] || 'Procesando…';
+          labelEl.textContent = steps[0] || '…';
         }
         function advance(message) {
           if (!steps.length) {
@@ -740,7 +1041,7 @@
             labelEl.textContent = message;
           } else {
             const fallbackIndex = Math.min(current, steps.length - 1);
-            labelEl.textContent = steps[fallbackIndex] || 'Procesando…';
+            labelEl.textContent = steps[fallbackIndex] || '…';
           }
         }
         function complete(message) {
@@ -787,7 +1088,7 @@
         const { statusTarget, progress, fetchOptions } = options;
         try {
           const method = (fetchOptions && fetchOptions.method) || 'POST';
-          const message = method === 'GET' ? 'Conectando con el servidor…' : 'Enviando solicitud…';
+          const message = method === 'GET' ? t('msg-connecting') : t('msg-sending');
           progress?.advance(message);
           const mergedOptions = {
             ...fetchOptions,
@@ -802,9 +1103,9 @@
             const errorPayload = await response.json().catch(() => ({}));
             throw new Error(errorPayload.detail || 'Error al preparar el archivo');
           }
-          progress?.advance('Descargando datos…');
+          progress?.advance(t('msg-downloading'));
           const blob = await response.blob();
-          progress?.advance('Listando archivo para descarga…');
+          progress?.advance(t('msg-preparing-file'));
           const disposition = response.headers.get('Content-Disposition');
           let filename = 'vhs-download';
           if (disposition) {
@@ -823,8 +1124,8 @@
             }
           }
           triggerBlobDownload(blob, filename);
-          statusTarget && (statusTarget.textContent = 'Descarga lista.');
-          progress?.complete('Archivo listo para guardar.');
+          statusTarget && (statusTarget.textContent = t('msg-done-status'));
+          progress?.complete(t('msg-done-progress'));
         } catch (error) {
           const fallbackMessage =
             error instanceof Error && typeof error.message === 'string'
@@ -832,7 +1133,7 @@
               : 'Ha ocurrido un error inesperado.';
           const message =
             error instanceof TypeError
-              ? 'No se pudo contactar con el servidor. Revisa la conexión o si hay un bloqueador en la red.'
+              ? t('msg-error-network')
               : fallbackMessage;
           progress?.fail(message);
           if (statusTarget) {
@@ -853,8 +1154,8 @@
           const format = String(formData.get('format') || 'video_high');
           const steps =
             detectTranscription && format.startsWith('transcript')
-              ? PROGRESS_STEPS.transcription
-              : PROGRESS_STEPS.default;
+              ? getProgressSteps().transcription
+              : getProgressSteps().default;
           tracker.reset();
           tracker.start(steps);
           statusElement.textContent = steps[0] || 'Preparando solicitud…';
@@ -883,15 +1184,15 @@
       ffmpegForm?.addEventListener('submit', async (event) => {
         event.preventDefault();
         if (!ffmpegFileInput?.files?.length) {
-          ffmpegStatusEl.textContent = 'Selecciona un archivo válido.';
+          ffmpegStatusEl.textContent = t('msg-no-file');
           return;
         }
         const formData = new FormData();
         formData.append('file', ffmpegFileInput.files[0]);
         formData.append('media_format', ffmpegFormatSelect?.value || 'ffmpeg_mp3-192');
         ffmpegProgress.reset();
-        ffmpegProgress.start(PROGRESS_STEPS.ffmpeg);
-        ffmpegStatusEl.textContent = 'Preparando archivo local…';
+        ffmpegProgress.start(getProgressSteps().ffmpeg);
+        ffmpegStatusEl.textContent = getProgressSteps().ffmpeg[0] || '…';
         try {
           await downloadFromEndpoint('/api/ffmpeg/upload', {
             statusTarget: ffmpegStatusEl,
@@ -909,15 +1210,15 @@
       uploadForm?.addEventListener('submit', async (event) => {
         event.preventDefault();
         if (!uploadFileInput?.files?.length) {
-          uploadStatusEl.textContent = 'Selecciona un archivo válido.';
+          uploadStatusEl.textContent = t('msg-no-file');
           return;
         }
         const formData = new FormData();
         formData.append('file', uploadFileInput.files[0]);
         formData.append('media_format', uploadFormatSelect?.value || 'transcript_text');
         uploadProgress.reset();
-        uploadProgress.start(PROGRESS_STEPS.transcription);
-        uploadStatusEl.textContent = 'Preparando archivo local…';
+        uploadProgress.start(getProgressSteps().transcription);
+        uploadStatusEl.textContent = getProgressSteps().transcription[0] || '…';
         try {
           await downloadFromEndpoint('/api/transcribe/upload', {
             statusTarget: uploadStatusEl,
@@ -946,7 +1247,7 @@
 
       function formatAge(ageSeconds) {
         const minutes = Math.floor(ageSeconds / 60);
-        if (minutes < 1) return 'recién descargado';
+        if (minutes < 1) return t('age-just');
         if (minutes < 60) return `${minutes} min`;
         const hours = Math.floor(minutes / 60);
         if (hours < 24) return `${hours} h`;
@@ -955,14 +1256,15 @@
       }
 
       async function deleteCacheItem(item) {
-        cacheStatusEl.textContent = `Eliminando «${item.title || item.cache_key}»…`;
+        const name = item.title || item.cache_key;
+        cacheStatusEl.textContent = t('msg-deleting')(name);
         try {
           const response = await fetch(item.delete_url, { method: 'DELETE' });
           if (!response.ok) {
             const errorPayload = await response.json().catch(() => ({}));
-            throw new Error(errorPayload.detail || 'No se pudo eliminar el archivo de la caché');
+            throw new Error(errorPayload.detail || t('msg-error-delete-cache'));
           }
-          cacheStatusEl.textContent = 'Elemento eliminado.';
+          cacheStatusEl.textContent = t('msg-deleted-ok');
           await loadCachePanel();
         } catch (error) {
           cacheStatusEl.textContent = error.message;
@@ -974,7 +1276,7 @@
         if (!payload.items.length) {
           const empty = document.createElement('p');
           empty.className = 'hint';
-          empty.textContent = 'No hay elementos recientes en la caché.';
+          empty.textContent = t('msg-no-cache');
           cacheContent.appendChild(empty);
           return;
         }
@@ -982,20 +1284,20 @@
           const entry = document.createElement('div');
           entry.className = 'cache-item';
           entry.innerHTML = `
-            <strong>${item.title || 'Descarga'}</strong>
+            <strong>${item.title || t('msg-download-title-default')}</strong>
             <div class="cache-meta">
-              <span>Formato: ${item.media_format}</span>
-              <span>Peso: ${formatBytes(item.filesize_bytes)}</span>
-              <span>Edad: ${formatAge(item.age_seconds)}</span>
+              <span>${t('cache-meta-format')}: ${item.media_format}</span>
+              <span>${t('cache-meta-size')}: ${formatBytes(item.filesize_bytes)}</span>
+              <span>${t('cache-meta-age')}: ${formatAge(item.age_seconds)}</span>
             </div>
           `;
           const actions = document.createElement('div');
           actions.className = 'cache-actions';
           const downloadBtn = document.createElement('button');
           downloadBtn.className = 'ghost-button';
-          downloadBtn.textContent = 'Volver a descargar';
+          downloadBtn.textContent = t('cache-btn-redownload');
           downloadBtn.addEventListener('click', async () => {
-            cacheStatusEl.textContent = 'Obteniendo archivo desde la caché…';
+            cacheStatusEl.textContent = t('msg-getting-from-cache');
             try {
               await downloadFromEndpoint(item.download_url, { statusTarget: cacheStatusEl });
             } catch (error) {
@@ -1007,10 +1309,10 @@
           openBtn.target = '_blank';
           openBtn.rel = 'noreferrer';
           openBtn.className = 'ghost-button';
-          openBtn.textContent = 'Ver origen';
+          openBtn.textContent = t('cache-btn-source');
           const deleteBtn = document.createElement('button');
           deleteBtn.className = 'ghost-button danger';
-          deleteBtn.textContent = 'Eliminar caché';
+          deleteBtn.textContent = t('cache-btn-delete');
           deleteBtn.addEventListener('click', () => deleteCacheItem(item));
           actions.append(downloadBtn, openBtn, deleteBtn);
           entry.appendChild(actions);
@@ -1019,19 +1321,17 @@
       }
 
       async function loadCachePanel() {
-        cacheContent.innerHTML = '<p class="hint">Actualizando…</p>';
+        cacheContent.innerHTML = `<p class="hint">${t('msg-updating-cache')}</p>`;
         cacheStatusEl.textContent = '';
         try {
           const response = await fetch('/api/cache');
           if (!response.ok) {
-            throw new Error('No se pudo obtener la caché');
+            throw new Error(t('msg-error-fetch-cache'));
           }
           const payload = await response.json();
           renderCacheEntries(payload);
           const ttlHours = payload.ttl_seconds ? Math.round(payload.ttl_seconds / 3600) : 0;
-          cacheStatusEl.textContent = `Elementos: ${payload.items.length} · ${formatBytes(
-            payload.total_bytes,
-          )} en caché · TTL ${ttlHours} h`;
+          cacheStatusEl.textContent = t('cache-stats')(payload.items.length, formatBytes(payload.total_bytes), ttlHours);
         } catch (error) {
           cacheContent.innerHTML = '';
           cacheStatusEl.textContent = error.message;
@@ -1039,16 +1339,16 @@
       }
 
       async function loadUsageChart() {
-        usageStatusEl.textContent = 'Calculando actividad…';
+        usageStatusEl.textContent = t('msg-computing');
         try {
           const response = await fetch('/api/stats/usage');
           if (!response.ok) {
-            throw new Error('No se pudo obtener la actividad');
+            throw new Error(t('msg-error-fetch-activity'));
           }
           const payload = await response.json();
           const labels = payload.points.map((point) => {
             const date = new Date(point.date);
-            return date.toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric' });
+            return date.toLocaleDateString(locale(), { weekday: 'short', day: 'numeric' });
           });
           const downloads = payload.points.map((point) => point.downloads);
           const apiDownloads = payload.points.map((point) => point.api_downloads || 0);
@@ -1064,105 +1364,17 @@
           const translations = payload.points.map((point) => point.translations || 0);
           const diarized = payload.points.map((point) => point.diarized || 0);
           const datasets = [
-            {
-              label: 'Descargas',
-              data: downloads,
-              borderColor: '#f97316',
-              backgroundColor: 'rgba(249, 115, 22, 0.2)',
-              tension: 0.3,
-              fill: true,
-              yAxisID: 'y',
-            },
-            {
-              label: 'Descargas API',
-              data: apiDownloads,
-              borderColor: '#38bdf8',
-              backgroundColor: 'rgba(56, 189, 248, 0.25)',
-              tension: 0.3,
-              fill: false,
-              yAxisID: 'y',
-            },
-            {
-              label: 'Descargas web',
-              data: webDownloads,
-              borderColor: '#eab308',
-              backgroundColor: 'rgba(234, 179, 8, 0.25)',
-              tension: 0.3,
-              fill: false,
-              yAxisID: 'y',
-            },
-            {
-              label: 'Descargas otras',
-              data: otherDownloads,
-              borderColor: '#94a3b8',
-              backgroundColor: 'rgba(148, 163, 184, 0.25)',
-              tension: 0.3,
-              fill: false,
-              yAxisID: 'y',
-            },
-            {
-              label: 'Aciertos caché',
-              data: cacheHits,
-              borderColor: '#22d3ee',
-              backgroundColor: 'rgba(34, 211, 238, 0.2)',
-              tension: 0.3,
-              fill: true,
-              yAxisID: 'y',
-            },
-            {
-              label: 'Palabras transcritas',
-              data: wordCounts,
-              borderColor: '#c084fc',
-              backgroundColor: 'rgba(192, 132, 252, 0.3)',
-              tension: 0.3,
-              fill: false,
-              yAxisID: 'y1',
-            },
-            {
-              label: 'Recodificaciones ffmpeg',
-              data: recodings,
-              borderColor: '#4ade80',
-              backgroundColor: 'rgba(74, 222, 128, 0.25)',
-              tension: 0.3,
-              fill: false,
-              yAxisID: 'y',
-            },
-            {
-              label: 'Transcripciones listas',
-              data: transcriptionJobs,
-              borderColor: '#f472b6',
-              backgroundColor: 'rgba(244, 114, 182, 0.25)',
-              tension: 0.3,
-              fill: false,
-              yAxisID: 'y',
-            },
-            {
-              label: 'Traducciones',
-              data: translations,
-              borderColor: '#22d3ee',
-              backgroundColor: 'rgba(34, 211, 238, 0.2)',
-              tension: 0.3,
-              fill: false,
-              yAxisID: 'y',
-            },
-            {
-              label: 'Diarizadas',
-              data: diarized,
-              borderColor: '#c084fc',
-              backgroundColor: 'rgba(192, 132, 252, 0.2)',
-              tension: 0.3,
-              fill: false,
-              yAxisID: 'y',
-            },
-            {
-              label: 'Errores',
-              data: errors,
-              borderColor: '#ef4444',
-              backgroundColor: 'rgba(239, 68, 68, 0.25)',
-              tension: 0.3,
-              fill: false,
-              yAxisID: 'y',
-            },
+            { label: t('chart-downloads'),     data: downloads,        borderColor: '#f97316', backgroundColor: 'rgba(249, 115, 22, 0.2)',   tension: 0.3, fill: true,  yAxisID: 'y' },
+            { label: t('chart-api'),            data: apiDownloads,     borderColor: '#38bdf8', backgroundColor: 'rgba(56, 189, 248, 0.25)',  tension: 0.3, fill: false, yAxisID: 'y' },
+            { label: t('chart-web'),            data: webDownloads,     borderColor: '#eab308', backgroundColor: 'rgba(234, 179, 8, 0.25)',   tension: 0.3, fill: false, yAxisID: 'y' },
+            { label: t('chart-other'),          data: otherDownloads,   borderColor: '#94a3b8', backgroundColor: 'rgba(148, 163, 184, 0.25)', tension: 0.3, fill: false, yAxisID: 'y' },
+            { label: t('chart-cache'),          data: cacheHits,        borderColor: '#22d3ee', backgroundColor: 'rgba(34, 211, 238, 0.2)',   tension: 0.3, fill: true,  yAxisID: 'y' },
+            { label: t('chart-words'),          data: wordCounts,       borderColor: '#c084fc', backgroundColor: 'rgba(192, 132, 252, 0.3)',  tension: 0.3, fill: false, yAxisID: 'y1' },
+            { label: t('chart-recodings'),      data: recodings,        borderColor: '#4ade80', backgroundColor: 'rgba(74, 222, 128, 0.25)',  tension: 0.3, fill: false, yAxisID: 'y' },
+            { label: t('chart-transcriptions'), data: transcriptionJobs,borderColor: '#f472b6', backgroundColor: 'rgba(244, 114, 182, 0.25)',tension: 0.3, fill: false, yAxisID: 'y' },
+            { label: t('chart-translations'),   data: translations,     borderColor: '#22d3ee', backgroundColor: 'rgba(34, 211, 238, 0.2)',   tension: 0.3, fill: false, yAxisID: 'y' },
+            { label: t('chart-diarized'),       data: diarized,         borderColor: '#c084fc', backgroundColor: 'rgba(192, 132, 252, 0.2)',  tension: 0.3, fill: false, yAxisID: 'y' },
+            { label: t('chart-errors'),         data: errors,           borderColor: '#ef4444', backgroundColor: 'rgba(239, 68, 68, 0.25)',   tension: 0.3, fill: false, yAxisID: 'y' },
           ];
           if (usageChart) {
             usageChart.data.labels = labels;
@@ -1227,72 +1439,49 @@
           const transcriptTop =
             payload.top_formats?.find((entry) => String(entry.media_format).startsWith('transcript')) || null;
 
+          const loc = locale();
           if (downloadStatsEl) {
-            let txt = `Descargas ${payload.total} · Caché ${totalCacheHits} · API ${apiTotal} · Web ${webTotal}`;
-            if (otherTotal) txt += ` · Otras ${otherTotal}`;
-            if (downloadTop) txt += ` · Top formato ${downloadTop.media_format} (${downloadTop.count})`;
+            let txt = `${t('lbl-downloads')} ${payload.total} · ${t('lbl-cache')} ${totalCacheHits} · ${t('lbl-api')} ${apiTotal} · ${t('lbl-web')} ${webTotal}`;
+            if (otherTotal) txt += ` · ${t('lbl-other')} ${otherTotal}`;
+            if (downloadTop) txt += ` · ${t('lbl-top')} ${downloadTop.media_format} (${downloadTop.count})`;
             downloadStatsEl.textContent = txt;
           }
           if (transcribeStatsEl) {
-            let txt = `Transcripciones ${transcriptions}`;
-            if (totalWords) txt += ` · Palabras ${totalWords.toLocaleString('es-ES')}`;
-            if (totalTokens && totalTokens !== totalWords) {
-              txt += ` · Tokens ${totalTokens.toLocaleString('es-ES')}`;
-            }
+            let txt = `${t('lbl-transcriptions')} ${transcriptions}`;
+            if (totalWords) txt += ` · ${t('lbl-words')} ${totalWords.toLocaleString(loc)}`;
+            if (totalTokens && totalTokens !== totalWords) txt += ` · ${t('lbl-tokens')} ${totalTokens.toLocaleString(loc)}`;
             if (transcriptTop) txt += ` · Top ${transcriptTop.media_format} (${transcriptTop.count})`;
-            if (totalErrors) txt += ` · Errores ${totalErrors}`;
-            if (translationsTotal) txt += ` · Traducciones ${translationsTotal}`;
-            if (diarizedTotal) txt += ` · Diarizadas ${diarizedTotal}`;
+            if (totalErrors) txt += ` · ${t('lbl-errors')} ${totalErrors}`;
+            if (translationsTotal) txt += ` · ${t('lbl-translations')} ${translationsTotal}`;
+            if (diarizedTotal) txt += ` · ${t('lbl-diarized')} ${diarizedTotal}`;
             transcribeStatsEl.textContent = txt;
           }
           if (ffmpegStatsEl) {
-            let txt = `Recodificaciones ffmpeg ${ffmpegRuns || 0}`;
+            let txt = `${t('lbl-recodings')} ${ffmpegRuns || 0}`;
             if (ffmpegTop) txt += ` · Top ${ffmpegTop.media_format} (${ffmpegTop.count})`;
-            if (totalErrors) txt += ` · Errores ${totalErrors}`;
+            if (totalErrors) txt += ` · ${t('lbl-errors')} ${totalErrors}`;
             ffmpegStatsEl.textContent = txt;
           }
-          let summary = `Últimos ${payload.days} días: ${payload.total} descargas (API: ${apiTotal} · Web: ${webTotal}`;
-          if (otherTotal) {
-            summary += ` · Otras: ${otherTotal}`;
-          }
-          summary += `) · ${totalCacheHits} desde caché.`;
-          if (totalWords) {
-            summary += ` · ${totalWords.toLocaleString('es-ES')} palabras transcritas`;
-          }
-          if (totalTokens && totalTokens !== totalWords) {
-            summary += ` · ${totalTokens.toLocaleString('es-ES')} tokens estimados`;
-          }
-          if (payload.ffmpeg_runs) {
-            summary += ` · ${payload.ffmpeg_runs} recodificaciones ffmpeg`;
-          }
-          if (payload.transcriptions) {
-            summary += ` · ${payload.transcriptions} entregas de texto`;
-          }
-          if (translationsTotal) {
-            summary += ` · ${translationsTotal} traducciones`;
-          }
-          if (diarizedTotal) {
-            summary += ` · ${diarizedTotal} diarizadas`;
-          }
-          if (totalErrors) {
-            summary += ` · ${totalErrors} errores de servicio`;
-          }
-          if (payload.unique_formats) {
-            summary += ` · ${payload.unique_formats} formatos solicitados`;
-          }
+          let summary = t('lbl-last-days')(payload.days, payload.total, apiTotal, webTotal);
+          if (otherTotal) summary += ` · ${t('lbl-other')}: ${otherTotal}`;
+          summary += `) · ${totalCacheHits} ${t('lbl-from-cache')}.`;
+          if (totalWords) summary += ` · ${totalWords.toLocaleString(loc)} ${t('lbl-words').toLowerCase()}`;
+          if (totalTokens && totalTokens !== totalWords) summary += ` · ${totalTokens.toLocaleString(loc)} ${t('lbl-tokens').toLowerCase()}`;
+          if (payload.ffmpeg_runs) summary += ` · ${payload.ffmpeg_runs} ${t('lbl-recodings')}`;
+          if (payload.transcriptions) summary += ` · ${payload.transcriptions} ${t('lbl-transcriptions').toLowerCase()}`;
+          if (translationsTotal) summary += ` · ${translationsTotal} ${t('lbl-translations').toLowerCase()}`;
+          if (diarizedTotal) summary += ` · ${diarizedTotal} ${t('lbl-diarized').toLowerCase()}`;
+          if (totalErrors) summary += ` · ${totalErrors} ${t('lbl-errors').toLowerCase()}`;
+          if (payload.unique_formats) summary += ` · ${payload.unique_formats} formats`;
           if (payload.top_formats?.length) {
-            const formatsLabel = payload.top_formats
-              .map((entry) => `${entry.media_format} (${entry.count})`)
-              .join(', ');
+            const formatsLabel = payload.top_formats.map((e) => `${e.media_format} (${e.count})`).join(', ');
             summary += ` · Top: ${formatsLabel}`;
           }
-          if (usageStatusEl) {
-            usageStatusEl.textContent = summary;
-          }
+          if (usageStatusEl) usageStatusEl.textContent = summary;
           if (processingStatsEl) {
             const avg = proc.average_ms ? proc.average_ms.toFixed(1) : '0';
             const p95 = proc.p95_ms ? proc.p95_ms.toFixed(1) : '0';
-            processingStatsEl.textContent = `Media ${avg} ms · P95 ${p95} ms`;
+            processingStatsEl.textContent = `${t('lbl-avg')} ${avg} ms · ${t('lbl-p95')} ${p95} ms`;
           }
           if (bytesStatsEl) {
             const bytesFmt = (val) => {
@@ -1300,13 +1489,10 @@
               const units = ['B', 'KB', 'MB', 'GB'];
               let v = val;
               let i = 0;
-              while (v >= 1024 && i < units.length - 1) {
-                v /= 1024;
-                i += 1;
-              }
+              while (v >= 1024 && i < units.length - 1) { v /= 1024; i += 1; }
               return `${v.toFixed(v >= 10 || i === 0 ? 0 : 1)} ${units[i]}`;
             };
-            bytesStatsEl.textContent = `Servidos ${bytesFmt(bytesServed)} · Ahorro caché ${bytesFmt(cacheBytesSaved)}`;
+            bytesStatsEl.textContent = `${t('lbl-served')} ${bytesFmt(bytesServed)} · ${t('lbl-cache-saving')} ${bytesFmt(cacheBytesSaved)}`;
           }
           if (providersStatsEl) {
             const entries = Object.entries(providers)
@@ -1321,7 +1507,7 @@
             errorsStatsEl.textContent = tops || '–';
           }
 
-          // Procesar estadísticas all-time (desde el inicio)
+          // all-time stats
           const alltime = payload.alltime || {};
           if (alltimeDownloadStatsEl) {
             const alltimeTotal = alltime.total || 0;
@@ -1329,10 +1515,9 @@
             const alltimeApi = alltime.api_downloads || 0;
             const alltimeWeb = alltime.web_downloads || 0;
             const alltimeOther = alltime.other_downloads || 0;
-            const alltimeDownloadTop =
-              alltime.top_formats?.find((entry) => !String(entry.media_format).startsWith('ffmpeg_')) || null;
-            let txt = `Total ${alltimeTotal.toLocaleString('es-ES')} · Caché ${alltimeCacheHits.toLocaleString('es-ES')} · API ${alltimeApi.toLocaleString('es-ES')} · Web ${alltimeWeb.toLocaleString('es-ES')}`;
-            if (alltimeOther) txt += ` · Otras ${alltimeOther.toLocaleString('es-ES')}`;
+            const alltimeDownloadTop = alltime.top_formats?.find((e) => !String(e.media_format).startsWith('ffmpeg_')) || null;
+            let txt = `Total ${alltimeTotal.toLocaleString(loc)} · ${t('lbl-cache')} ${alltimeCacheHits.toLocaleString(loc)} · ${t('lbl-api')} ${alltimeApi.toLocaleString(loc)} · ${t('lbl-web')} ${alltimeWeb.toLocaleString(loc)}`;
+            if (alltimeOther) txt += ` · ${t('lbl-other')} ${alltimeOther.toLocaleString(loc)}`;
             if (alltimeDownloadTop) txt += ` · Top ${alltimeDownloadTop.media_format} (${alltimeDownloadTop.count})`;
             alltimeDownloadStatsEl.textContent = txt;
           }
@@ -1342,51 +1527,41 @@
             const alltimeTokens = alltime.total_tokens || 0;
             const alltimeTranslations = alltime.translations || 0;
             const alltimeDiarized = alltime.diarized || 0;
-            const alltimeTranscriptTop =
-              alltime.top_formats?.find((entry) => String(entry.media_format).startsWith('transcript')) || null;
-            let txt = `Total ${alltimeTranscriptions.toLocaleString('es-ES')}`;
-            if (alltimeWords) txt += ` · Palabras ${alltimeWords.toLocaleString('es-ES')}`;
-            if (alltimeTokens && alltimeTokens !== alltimeWords) txt += ` · Tokens ${alltimeTokens.toLocaleString('es-ES')}`;
+            const alltimeTranscriptTop = alltime.top_formats?.find((e) => String(e.media_format).startsWith('transcript')) || null;
+            let txt = `Total ${alltimeTranscriptions.toLocaleString(loc)}`;
+            if (alltimeWords) txt += ` · ${t('lbl-words')} ${alltimeWords.toLocaleString(loc)}`;
+            if (alltimeTokens && alltimeTokens !== alltimeWords) txt += ` · ${t('lbl-tokens')} ${alltimeTokens.toLocaleString(loc)}`;
             if (alltimeTranscriptTop) txt += ` · Top ${alltimeTranscriptTop.media_format} (${alltimeTranscriptTop.count})`;
-            if (alltimeTranslations) txt += ` · Traducciones ${alltimeTranslations.toLocaleString('es-ES')}`;
-            if (alltimeDiarized) txt += ` · Diarizadas ${alltimeDiarized.toLocaleString('es-ES')}`;
+            if (alltimeTranslations) txt += ` · ${t('lbl-translations')} ${alltimeTranslations.toLocaleString(loc)}`;
+            if (alltimeDiarized) txt += ` · ${t('lbl-diarized')} ${alltimeDiarized.toLocaleString(loc)}`;
             alltimeTranscribeStatsEl.textContent = txt;
           }
           if (alltimeFfmpegStatsEl) {
             const alltimeFfmpegRuns = alltime.ffmpeg_runs || 0;
-            const alltimeFfmpegTop =
-              alltime.top_formats?.find((entry) => String(entry.media_format).startsWith('ffmpeg_')) || null;
-            let txt = `Total ${alltimeFfmpegRuns.toLocaleString('es-ES')}`;
+            const alltimeFfmpegTop = alltime.top_formats?.find((e) => String(e.media_format).startsWith('ffmpeg_')) || null;
+            let txt = `Total ${alltimeFfmpegRuns.toLocaleString(loc)}`;
             if (alltimeFfmpegTop) txt += ` · Top ${alltimeFfmpegTop.media_format} (${alltimeFfmpegTop.count})`;
             alltimeFfmpegStatsEl.textContent = txt;
           }
           if (alltimeProcessingStatsEl) {
-            const alltimeProc = alltime.processing || {};
-            const avg = alltimeProc.average_ms ? alltimeProc.average_ms.toFixed(1) : '0';
-            const p95 = alltimeProc.p95_ms ? alltimeProc.p95_ms.toFixed(1) : '0';
-            alltimeProcessingStatsEl.textContent = `Media ${avg} ms · P95 ${p95} ms`;
+            const ap = alltime.processing || {};
+            alltimeProcessingStatsEl.textContent = `${t('lbl-avg')} ${ap.average_ms ? ap.average_ms.toFixed(1) : '0'} ms · ${t('lbl-p95')} ${ap.p95_ms ? ap.p95_ms.toFixed(1) : '0'} ms`;
           }
           if (alltimeBytesStatsEl) {
-            const bytesFmt = (val) => {
+            const bytesFmt2 = (val) => {
               if (!val) return '0 B';
               const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-              let v = val;
-              let i = 0;
-              while (v >= 1024 && i < units.length - 1) {
-                v /= 1024;
-                i += 1;
-              }
+              let v = val; let i = 0;
+              while (v >= 1024 && i < units.length - 1) { v /= 1024; i += 1; }
               return `${v.toFixed(v >= 10 || i === 0 ? 0 : 1)} ${units[i]}`;
             };
-            const alltimeBytes = alltime.bytes_served || 0;
-            const alltimeCacheBytes = alltime.cache_bytes_saved || 0;
-            alltimeBytesStatsEl.textContent = `Servidos ${bytesFmt(alltimeBytes)} · Ahorro caché ${bytesFmt(alltimeCacheBytes)}`;
+            alltimeBytesStatsEl.textContent = `${t('lbl-served')} ${bytesFmt2(alltime.bytes_served || 0)} · ${t('lbl-cache-saving')} ${bytesFmt2(alltime.cache_bytes_saved || 0)}`;
           }
           if (alltimeProvidersStatsEl) {
             const alltimeProviders = alltime.providers || {};
             const entries = Object.entries(alltimeProviders)
               .sort(([, a], [, b]) => b - a)
-              .map(([name, count]) => `${name}: ${count.toLocaleString('es-ES')}`)
+              .map(([name, count]) => `${name}: ${count.toLocaleString(loc)}`)
               .join(' · ');
             alltimeProvidersStatsEl.textContent = entries || '–';
           }
@@ -1396,7 +1571,7 @@
             const tops = alltimeTopErrors
               .map((entry) => `${entry.error_type}: ${entry.count}`)
               .join(' · ');
-            let txt = `Total ${alltimeErrors.toLocaleString('es-ES')}`;
+            let txt = `Total ${alltimeErrors.toLocaleString(loc)}`;
             if (tops) txt += ` · ${tops}`;
             alltimeErrorsStatsEl.textContent = txt;
           }
