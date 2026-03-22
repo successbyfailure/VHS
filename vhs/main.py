@@ -1986,8 +1986,9 @@ def generate_transcription_file(url: str, media_format: str) -> Tuple[Path, Dict
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(
-        "index.html",
-        template_context(
+        request=request,
+        name="index.html",
+        context=template_context(
             request,
             supported_services=SUPPORTED_SERVICES,
         ),
@@ -1997,8 +1998,9 @@ async def index(request: Request) -> HTMLResponse:
 @app.get("/docs/api", response_class=HTMLResponse)
 async def api_docs(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(
-        "api_docs.html",
-        template_context(
+        request=request,
+        name="api_docs.html",
+        context=template_context(
             request,
             formats=FORMAT_DESCRIPTIONS,
         ),
