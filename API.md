@@ -18,6 +18,9 @@ Transcripciones (todos los formatos funcionan correctamente desde v0.2.9):
 - `transcript_json`: salida JSON completa con segmentos y marcas de tiempo.
 - `transcript_text`: solo el texto plano consolidado.
 - `transcript_srt`: archivo SRT listo para reproductores.
+- `transcript_diarized_json`, `transcript_diarized_text`: salida con etiquetas de hablante (usa modelos de `DIARIZATION_MODELS`).
+- `transcript_translate_json`, `transcript_translate_text`, `transcript_translate_srt`: traducción al español sobre el mismo endpoint.
+- `transcript_translate_diarized_json`, `transcript_translate_diarized_text`: traducción al español + etiquetas de hablante.
 
 ## Perfiles ffmpeg y transcripción local
 
@@ -26,7 +29,7 @@ Los endpoints de conversión y transcripción aceptan los siguientes formatos:
 - `ffmpeg_480p`, `ffmpeg_720p`, `ffmpeg_1080p`, `ffmpeg_1440p`, `ffmpeg_3840p`: MP4 con escalado y bitrates objetivo (2.5 Mbps, 4 Mbps, 6.5 Mbps, 12 Mbps, 20 Mbps respectivamente; audio AAC entre 128–256 kbps).
 - `ffmpeg_wav`: WAV sin pérdidas (44.1 kHz, estéreo).
 - `ffmpeg_mp3-192`, `ffmpeg_mp3-128`, `ffmpeg_mp3-96`, `ffmpeg_mp3-64`: MP3 con los bitrates indicados.
-- `transcript_json`, `transcript_text`, `transcript_srt`: salidas de transcripción.
+- `transcript_json`, `transcript_text`, `transcript_srt`, `transcript_diarized_json`, `transcript_diarized_text`, `transcript_translate_json`, `transcript_translate_text`, `transcript_translate_srt`, `transcript_translate_diarized_json`, `transcript_translate_diarized_text`: salidas de transcripción.
 
 ## Endpoints principales
 
@@ -56,7 +59,7 @@ Body JSON:
 ### Transcribir un archivo local
 `POST /api/transcribe/upload`
 
-- `multipart/form-data` con campos `file` y `media_format` (`transcript_json`, `transcript_text`, `transcript_srt`).
+- `multipart/form-data` con campos `file` y `media_format` (`transcript_json`, `transcript_text`, `transcript_srt`, `transcript_diarized_json`, `transcript_diarized_text`, `transcript_translate_json`, `transcript_translate_text`, `transcript_translate_srt`, `transcript_translate_diarized_json`, `transcript_translate_diarized_text`).
 - Campo opcional `transcription_model` para elegir el modelo STT (solo modelos permitidos por `TRANSCRIPTION_MODELS`).
 - Campo opcional `diarize` (`true`/`false`) para activar diarización; al activarlo se usan modelos de `DIARIZATION_MODELS`.
 - Usa el mismo pipeline de transcripción que el importador remoto y devuelve texto, JSON o SRT según se solicite.
@@ -112,6 +115,6 @@ Body JSON:
 
 ## Nota de compatibilidad
 
-La rama actual elimina el soporte de `whisper-asr` y los formatos asociados de diarización/traducción (`transcript_diarized_*`, `transcript_translate_*`).
+El soporte de `whisper-asr` se eliminó, pero los formatos de diarización/traducción siguen disponibles usando el endpoint normal y modelos configurados en `DIARIZATION_MODELS`.
 
 Para más detalles sobre testing y ejemplos de uso, ver `test_data/TRANSCRIPTION_TESTING.md`.

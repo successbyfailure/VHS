@@ -109,6 +109,19 @@ TRANSLATION_MODEL=gpt-4o-mini
 - `transcript_text` - Texto plano
 - `transcript_srt` - Subtítulos SRT
 
+### Transcripción con Diarización
+- `transcript_diarized_json` - JSON con speakers
+- `transcript_diarized_text` - Texto con speakers
+
+### Traducción al Español
+- `transcript_translate_json` - JSON traducido
+- `transcript_translate_text` - Texto traducido
+- `transcript_translate_srt` - Subtítulos SRT en español
+
+### Traducción + Diarización
+- `transcript_translate_diarized_json` - JSON traducido con speakers
+- `transcript_translate_diarized_text` - Texto traducido con speakers
+
 ### FFmpeg
 - `ffmpeg_480p`, `ffmpeg_720p`, `ffmpeg_1080p`, `ffmpeg_1440p`, `ffmpeg_3840p`
 - `ffmpeg_mp3-192`, `ffmpeg_mp3-128`, `ffmpeg_mp3-96`, `ffmpeg_mp3-64`

@@ -444,6 +444,13 @@ TRANSCRIPTION_FORMATS = {
     "transcript_json",
     "transcript_text",
     "transcript_srt",
+    "transcript_diarized_json",
+    "transcript_diarized_text",
+    "transcript_translate_json",
+    "transcript_translate_text",
+    "transcript_translate_srt",
+    "transcript_translate_diarized_json",
+    "transcript_translate_diarized_text",
 }
 SUPPORTED_MEDIA_FORMATS = {
     *VIDEO_FORMAT_PROFILES,
@@ -498,6 +505,34 @@ FORMAT_DESCRIPTIONS: List[Dict[str, str]] = [
         "name": "transcript_srt",
         "description": "Subtítulos sincronizados (SRT)",
     },
+    {
+        "name": "transcript_diarized_json",
+        "description": "Transcripción detallada con identificación de hablantes (JSON)",
+    },
+    {
+        "name": "transcript_diarized_text",
+        "description": "Transcripción en texto plano con identificación de hablantes (TXT)",
+    },
+    {
+        "name": "transcript_translate_json",
+        "description": "Transcripción traducida al español con timestamps (JSON)",
+    },
+    {
+        "name": "transcript_translate_text",
+        "description": "Transcripción traducida al español en texto plano (TXT)",
+    },
+    {
+        "name": "transcript_translate_srt",
+        "description": "Subtítulos sincronizados traducidos al español (SRT)",
+    },
+    {
+        "name": "transcript_translate_diarized_json",
+        "description": "Transcripción traducida al español con identificación de hablantes (JSON)",
+    },
+    {
+        "name": "transcript_translate_diarized_text",
+        "description": "Transcripción traducida al español con identificación de hablantes (TXT)",
+    },
 ]
 
 for preset_name, preset in FFMPEG_PRESETS.items():
@@ -534,6 +569,21 @@ def normalize_media_format(media_format: str) -> str:
     return VIDEO_FORMAT_ALIASES.get(value, value)
 
 
+def is_diarization_format(media_format: str) -> bool:
+    normalized = normalize_media_format(media_format)
+    return normalized in {
+        "transcript_diarized_json",
+        "transcript_diarized_text",
+        "transcript_translate_diarized_json",
+        "transcript_translate_diarized_text",
+    }
+
+
+def is_translation_format(media_format: str) -> bool:
+    normalized = normalize_media_format(media_format)
+    return normalized.startswith("transcript_translate")
+
+
 def meta_path(key: str) -> Path:
     return META_DIR / f"{key}.json"
 
@@ -559,6 +609,13 @@ FORMAT_EXTENSIONS = {
     "transcript_json": ".json",
     "transcript_text": ".txt",
     "transcript_srt": ".srt",
+    "transcript_diarized_json": ".json",
+    "transcript_diarized_text": ".txt",
+    "transcript_translate_json": ".json",
+    "transcript_translate_text": ".txt",
+    "transcript_translate_srt": ".srt",
+    "transcript_translate_diarized_json": ".json",
+    "transcript_translate_diarized_text": ".txt",
 }
 
 for preset_name, preset in FFMPEG_PRESETS.items():
@@ -571,7 +628,12 @@ TRANSCRIPTION_FILE_SUFFIX = ".transcript.json"
 
 def media_type_for_format(media_format: str) -> str:
     normalized = normalize_media_format(media_format)
-    if normalized == "transcript_json":
+    if normalized in {
+        "transcript_json",
+        "transcript_diarized_json",
+        "transcript_translate_json",
+        "transcript_translate_diarized_json",
+    }:
         return "application/json"
     if normalized in TRANSCRIPTION_FORMATS - {"transcript_json"}:
         return "text/plain"
@@ -1760,9 +1822,14 @@ def estimate_transcription_stats(payload: Dict[str, Any]) -> Dict[str, int]:
 
 def render_transcription_payload(payload: Dict[str, Any], media_format: str) -> bytes:
     normalized = normalize_media_format(media_format)
-    if normalized == "transcript_json":
+    if normalized in {
+        "transcript_json",
+        "transcript_diarized_json",
+        "transcript_translate_json",
+        "transcript_translate_diarized_json",
+    }:
         text = json.dumps(payload, ensure_ascii=False, indent=2)
-    elif normalized == "transcript_srt":
+    elif normalized in {"transcript_srt", "transcript_translate_srt"}:
         text = transcription_payload_to_srt(payload)
     else:
         text = _transcription_text_only(payload)
@@ -1892,9 +1959,10 @@ def transcribe_audio_file(
     normalized_format = normalize_media_format(media_format)
     if normalized_format not in TRANSCRIPTION_FORMATS:
         raise DownloadError("Formato de transcripción no soportado")
+    effective_diarize = diarize or is_diarization_format(normalized_format)
     selected_model = (
         resolve_diarization_model(transcription_model)
-        if diarize
+        if effective_diarize
         else resolve_transcription_model(transcription_model)
     )
     try:
@@ -1911,14 +1979,20 @@ def generate_transcription_file(
 ) -> Tuple[Path, Dict]:
     if media_format not in TRANSCRIPTION_FORMATS:
         raise DownloadError("Formato de transcripción no soportado")
+    translation = is_translation_format(media_format)
+    effective_diarize = diarize or is_diarization_format(media_format)
     selected_model = (
         resolve_diarization_model(transcription_model)
-        if diarize
+        if effective_diarize
         else resolve_transcription_model(transcription_model)
     )
     model_suffix = f"model={selected_model}"
-    diarize_suffix = f"diarize={int(diarize)}"
-    key = cache_key(f"{url}::{model_suffix}::{diarize_suffix}", media_format)
+    diarize_suffix = f"diarize={int(effective_diarize)}"
+    translation_suffix = f"translation={int(translation)}"
+    key = cache_key(
+        f"{url}::{model_suffix}::{diarize_suffix}::{translation_suffix}",
+        media_format,
+    )
     purge_expired_entries()
     cached_path, cached_meta = fetch_cached_file(key)
     if cached_path:
@@ -1929,18 +2003,22 @@ def generate_transcription_file(
         audio_path,
         media_format,
         selected_model,
-        diarize=diarize,
+        diarize=effective_diarize,
     )
+    if translation:
+        transcript_payload = translate_transcription_payload(transcript_payload)
     transcription_stats = estimate_transcription_stats(transcript_payload)
 
-    # Solo se soporta transcript_json, transcript_srt y transcript_text.
-    if media_format == "transcript_json":
-        transcript_path = CACHE_DIR / f"{key}{TRANSCRIPTION_FILE_SUFFIX}"
+    if media_format.endswith("_json") or media_format == "transcript_json":
+        if media_format == "transcript_json":
+            transcript_path = CACHE_DIR / f"{key}{TRANSCRIPTION_FILE_SUFFIX}"
+        else:
+            transcript_path = CACHE_DIR / f"{key}.json"
         transcript_path.write_text(
             json.dumps(transcript_payload, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
-    elif media_format == "transcript_srt":
+    elif media_format.endswith("_srt") or media_format == "transcript_srt":
         transcript_path = CACHE_DIR / f"{key}.srt"
         srt_content = transcription_payload_to_srt(transcript_payload)
         transcript_path.write_text(srt_content, encoding="utf-8")
@@ -1960,7 +2038,8 @@ def generate_transcription_file(
         "cache_key": key,
         "transcription_stats": transcription_stats,
         "transcription_model": selected_model,
-        "diarization": bool(diarize),
+        "diarization": bool(effective_diarize),
+        "translation": bool(translation),
     }
     metadata.update(
         {
@@ -2095,14 +2174,15 @@ async def download_endpoint(
             ),
         )
     normalized_format = normalize_media_format(format_value)
-    diarize = parse_bool_flag(payload.get("diarize"))
+    requested_diarize = parse_bool_flag(payload.get("diarize"))
+    effective_diarize = requested_diarize or is_diarization_format(normalized_format)
     transcription_model_raw = payload.get("transcription_model")
     transcription_model = (
         str(transcription_model_raw).strip() if transcription_model_raw else None
     )
     if normalized_format in TRANSCRIPTION_FORMATS and transcription_model:
         try:
-            if diarize:
+            if effective_diarize:
                 resolve_diarization_model(transcription_model)
             else:
                 resolve_transcription_model(transcription_model)
@@ -2117,7 +2197,7 @@ async def download_endpoint(
                 url,
                 normalized_format,
                 transcription_model,
-                diarize,
+                effective_diarize,
             )
         elif normalized_format in FFMPEG_PRESETS:
             file_path, metadata = await run_in_threadpool(
@@ -2374,7 +2454,9 @@ async def transcribe_upload(
     file: UploadFile = File(...),
 ):
     format_value = media_format.lower()
-    diarize_enabled = parse_bool_flag(diarize)
+    requested_diarize = parse_bool_flag(diarize)
+    effective_diarize = requested_diarize or is_diarization_format(format_value)
+    translation_enabled = is_translation_format(format_value)
     requested_model = (transcription_model or "").strip() or None
     if format_value not in TRANSCRIPTION_FORMATS:
         raise HTTPException(
@@ -2383,7 +2465,7 @@ async def transcribe_upload(
         )
     if requested_model:
         try:
-            if diarize_enabled:
+            if effective_diarize:
                 resolve_diarization_model(requested_model)
             else:
                 resolve_transcription_model(requested_model)
@@ -2404,8 +2486,13 @@ async def transcribe_upload(
                 audio_path,
                 format_value,
                 requested_model,
-                diarize_enabled,
+                effective_diarize,
             )
+            if translation_enabled:
+                payload = await run_in_threadpool(
+                    translate_transcription_payload,
+                    payload,
+                )
         finally:
             try:
                 audio_path.unlink(missing_ok=True)

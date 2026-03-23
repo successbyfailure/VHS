@@ -481,6 +481,15 @@
                   <option value="transcript_text" data-diarize="true">Texto con hablantes (TXT)</option>
                   <option value="transcript_json" data-diarize="true">Detallado con hablantes (JSON)</option>
                 </optgroup>
+                <optgroup label="Traducción al español">
+                  <option value="transcript_translate_text">Texto (TXT)</option>
+                  <option value="transcript_translate_srt">Subtítulos (SRT)</option>
+                  <option value="transcript_translate_json">Detallado con tiempos (JSON)</option>
+                </optgroup>
+                <optgroup label="Traducción al español + hablantes">
+                  <option value="transcript_translate_diarized_text" data-diarize="true">Texto con hablantes (TXT)</option>
+                  <option value="transcript_translate_diarized_json" data-diarize="true">Detallado con hablantes (JSON)</option>
+                </optgroup>
               </select>
             </div>
             <div>
@@ -526,6 +535,15 @@
                 <optgroup label="Con identificación de hablantes">
                   <option value="transcript_text" data-diarize="true">Texto con hablantes (TXT)</option>
                   <option value="transcript_json" data-diarize="true">Detallado con hablantes (JSON)</option>
+                </optgroup>
+                <optgroup label="Traducción al español">
+                  <option value="transcript_translate_text">Texto (TXT)</option>
+                  <option value="transcript_translate_srt">Subtítulos (SRT)</option>
+                  <option value="transcript_translate_json">Detallado con tiempos (JSON)</option>
+                </optgroup>
+                <optgroup label="Traducción al español + hablantes">
+                  <option value="transcript_translate_diarized_text" data-diarize="true">Texto con hablantes (TXT)</option>
+                  <option value="transcript_translate_diarized_json" data-diarize="true">Detallado con hablantes (JSON)</option>
                 </optgroup>
               </select>
             </div>
@@ -899,6 +917,21 @@
             options: [
               { value: 'transcript_text', es: 'Texto con hablantes (TXT)', en: 'Text with speakers (TXT)', diarize: true },
               { value: 'transcript_json', es: 'Detallado con hablantes (JSON)', en: 'Detailed with speakers (JSON)', diarize: true },
+            ],
+          },
+          {
+            es: 'Traducción al español', en: 'Translation to Spanish',
+            options: [
+              { value: 'transcript_translate_text', es: 'Texto (TXT)', en: 'Plain text (TXT)', diarize: false },
+              { value: 'transcript_translate_srt', es: 'Subtítulos (SRT)', en: 'Subtitles (SRT)', diarize: false },
+              { value: 'transcript_translate_json', es: 'Detallado con tiempos (JSON)', en: 'Detailed with timestamps (JSON)', diarize: false },
+            ],
+          },
+          {
+            es: 'Traducción al español + hablantes', en: 'Translation to Spanish + speakers',
+            options: [
+              { value: 'transcript_translate_diarized_text', es: 'Texto con hablantes (TXT)', en: 'Text with speakers (TXT)', diarize: true },
+              { value: 'transcript_translate_diarized_json', es: 'Detallado con hablantes (JSON)', en: 'Detailed with speakers (JSON)', diarize: true },
             ],
           },
         ],
