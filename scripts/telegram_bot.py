@@ -230,15 +230,25 @@ async def handle_transcribe(
     def _transcribe() -> Path:
         ensure_storage_ready()
         if payload["type"] == "url":
-            fmt = "transcript_translate_text" if translate else "transcript_text"
-            file_path, _ = generate_transcription_file(payload["value"], fmt)
+            file_path, _ = generate_transcription_file(payload["value"], "transcript_text")
+            if translate:
+                source_text = file_path.read_text(encoding="utf-8")
+                translated_payload = translate_transcription_payload({"text": source_text})
+                translated_text = render_transcription_payload(
+                    translated_payload, "transcript_text"
+                )
+                translated_path = CACHE_DIR / f"telebot_{file_path.stem}_es.txt"
+                translated_path.write_text(translated_text.decode("utf-8"), encoding="utf-8")
+                return translated_path
             return file_path
         source_path = Path(payload["value"])
         audio_path = extract_audio_profile_from_file(source_path, "audio_med")
-        transcript = transcribe_audio_file(audio_path, "transcript_translate_text" if translate else "transcript_text")
-        text = render_transcription_payload(transcript, "transcript_text" if not translate else "transcript_translate_text")
+        transcript = transcribe_audio_file(audio_path, "transcript_text")
+        if translate:
+            transcript = translate_transcription_payload(transcript)
+        text = render_transcription_payload(transcript, "transcript_text")
         out = CACHE_DIR / f"telebot_{source_path.stem}.txt"
-        out.write_text(text, encoding="utf-8")
+        out.write_text(text.decode("utf-8"), encoding="utf-8")
         return out
 
     file_path = await asyncio.to_thread(_transcribe)

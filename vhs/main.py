@@ -11,7 +11,7 @@ import tempfile
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote
 
 import certifi
@@ -46,7 +46,6 @@ os.environ["REQUESTS_CA_BUNDLE"] = CERT_BUNDLE
 # sistema o del orquestador.
 load_dotenv()
 
-import requests
 import yt_dlp
 from openai import OpenAI
 from versioning import get_version
@@ -95,10 +94,13 @@ TRANSCRIPTION_ENDPOINT = os.getenv("TRANSCRIPTION_ENDPOINT", "https://api.openai
 TRANSCRIPTION_API_KEY = os.getenv("TRANSCRIPTION_API_KEY")
 _TRANSCRIPTION_MODEL_RAW = os.getenv("TRANSCRIPTION_MODEL", "gpt-4o-mini-transcribe").strip()
 _TRANSCRIPTION_MODELS_RAW = os.getenv("TRANSCRIPTION_MODELS", "").strip()
+_DIARIZATION_MODEL_RAW = os.getenv("DIARIZATION_MODEL", "").strip()
+_DIARIZATION_MODELS_RAW = os.getenv("DIARIZATION_MODELS", "").strip()
 
 
 def _parse_transcription_models(raw_models: str, fallback_model: str) -> List[Dict[str, str]]:
-    # Formato soportado: model-id - etiqueta, model-id::etiqueta o solo model-id.
+    # Formato soportado: model-id - etiqueta o solo model-id.
+    # Importante: no usar "::" como separador para no romper ids como "...::diarize".
     parsed: List[Dict[str, str]] = []
     if raw_models:
         for item in raw_models.split(","):
@@ -107,9 +109,7 @@ def _parse_transcription_models(raw_models: str, fallback_model: str) -> List[Di
                 continue
             model_id = value
             label = ""
-            if "::" in value:
-                model_id, label = value.split("::", 1)
-            elif " - " in value:
+            if " - " in value:
                 model_id, label = value.split(" - ", 1)
             model_id = model_id.strip()
             label = label.strip()
@@ -129,6 +129,25 @@ def _parse_transcription_models(raw_models: str, fallback_model: str) -> List[Di
     return deduped
 
 
+def _derive_diarization_models_from_transcription_options(
+    transcription_options: List[Dict[str, str]],
+) -> List[Dict[str, str]]:
+    derived: List[Dict[str, str]] = []
+    for option in transcription_options:
+        model_id = option["id"].strip()
+        if not model_id:
+            continue
+        if model_id.endswith("::diarize"):
+            continue
+        derived.append(
+            {
+                "id": f"{model_id}::diarize",
+                "label": f"{option['label']} (diarized)",
+            }
+        )
+    return derived
+
+
 TRANSCRIPTION_MODEL_OPTIONS = _parse_transcription_models(
     _TRANSCRIPTION_MODELS_RAW, _TRANSCRIPTION_MODEL_RAW
 )
@@ -139,6 +158,26 @@ elif TRANSCRIPTION_MODEL_IDS:
     TRANSCRIPTION_MODEL = TRANSCRIPTION_MODEL_IDS[0]
 else:
     TRANSCRIPTION_MODEL = ""
+
+_derived_diarization_options = _derive_diarization_models_from_transcription_options(
+    TRANSCRIPTION_MODEL_OPTIONS
+)
+_diarization_fallback_model = _DIARIZATION_MODEL_RAW or (
+    _derived_diarization_options[0]["id"] if _derived_diarization_options else ""
+)
+DIARIZATION_MODEL_OPTIONS = _parse_transcription_models(
+    _DIARIZATION_MODELS_RAW,
+    _diarization_fallback_model,
+)
+if not _DIARIZATION_MODELS_RAW and _derived_diarization_options:
+    DIARIZATION_MODEL_OPTIONS = _derived_diarization_options
+DIARIZATION_MODEL_IDS = [option["id"] for option in DIARIZATION_MODEL_OPTIONS]
+if _DIARIZATION_MODEL_RAW and _DIARIZATION_MODEL_RAW in DIARIZATION_MODEL_IDS:
+    DIARIZATION_MODEL = _DIARIZATION_MODEL_RAW
+elif DIARIZATION_MODEL_IDS:
+    DIARIZATION_MODEL = DIARIZATION_MODEL_IDS[0]
+else:
+    DIARIZATION_MODEL = ""
 
 
 def resolve_transcription_model(requested_model: Optional[str]) -> str:
@@ -156,8 +195,21 @@ def resolve_transcription_model(requested_model: Optional[str]) -> str:
     )
 
 
-WHISPER_ASR_URL = os.getenv("WHISPER_ASR_URL")
-WHISPER_ASR_TIMEOUT = int(os.getenv("WHISPER_ASR_TIMEOUT", "600"))
+def resolve_diarization_model(requested_model: Optional[str]) -> str:
+    selected = (requested_model or "").strip()
+    if selected:
+        if DIARIZATION_MODEL_IDS and selected not in DIARIZATION_MODEL_IDS:
+            raise DownloadError(
+                "Modelo de diarización no permitido. Revisa DIARIZATION_MODELS."
+            )
+        return selected
+    if DIARIZATION_MODEL:
+        return DIARIZATION_MODEL
+    raise DownloadError(
+        "La diarización no está disponible. Configura DIARIZATION_MODEL o DIARIZATION_MODELS."
+    )
+
+
 FFMPEG_BINARY = os.getenv("FFMPEG_BINARY", "ffmpeg")
 FFMPEG_ENABLE_NVENC = os.getenv("FFMPEG_ENABLE_NVENC", "").strip().lower() in {
     "1",
@@ -392,13 +444,6 @@ TRANSCRIPTION_FORMATS = {
     "transcript_json",
     "transcript_text",
     "transcript_srt",
-    "transcript_diarized_json",
-    "transcript_diarized_text",
-    "transcript_translate_json",
-    "transcript_translate_text",
-    "transcript_translate_srt",
-    "transcript_translate_diarized_json",
-    "transcript_translate_diarized_text",
 }
 SUPPORTED_MEDIA_FORMATS = {
     *VIDEO_FORMAT_PROFILES,
@@ -407,21 +452,6 @@ SUPPORTED_MEDIA_FORMATS = {
     *FFMPEG_PRESETS,
     *TRANSCRIPTION_FORMATS,
 }
-MEDIA_FORMAT_PATTERN = f"^({'|'.join(sorted(SUPPORTED_MEDIA_FORMATS))})$"
-
-def is_diarization_format(media_format: str) -> bool:
-    normalized = normalize_media_format(media_format)
-    return normalized in {
-        "transcript_diarized_json",
-        "transcript_diarized_text",
-        "transcript_translate_diarized_json",
-        "transcript_translate_diarized_text",
-    }
-
-
-def is_translation_format(media_format: str) -> bool:
-    normalized = normalize_media_format(media_format)
-    return normalized.startswith("transcript_translate")
 
 FORMAT_DESCRIPTIONS: List[Dict[str, str]] = [
     {
@@ -467,34 +497,6 @@ FORMAT_DESCRIPTIONS: List[Dict[str, str]] = [
     {
         "name": "transcript_srt",
         "description": "Subtítulos sincronizados (SRT)",
-    },
-    {
-        "name": "transcript_diarized_json",
-        "description": "Transcripción detallada con identificación de hablantes (JSON)",
-    },
-    {
-        "name": "transcript_diarized_text",
-        "description": "Transcripción en texto plano con identificación de hablantes (TXT)",
-    },
-    {
-        "name": "transcript_translate_json",
-        "description": "Transcripción traducida al español con timestamps (JSON)",
-    },
-    {
-        "name": "transcript_translate_text",
-        "description": "Transcripción traducida al español en texto plano (TXT)",
-    },
-    {
-        "name": "transcript_translate_srt",
-        "description": "Subtítulos sincronizados traducidos al español (SRT)",
-    },
-    {
-        "name": "transcript_translate_diarized_json",
-        "description": "Transcripción traducida al español con identificación de hablantes (JSON)",
-    },
-    {
-        "name": "transcript_translate_diarized_text",
-        "description": "Transcripción traducida al español con identificación de hablantes (TXT)",
     },
 ]
 
@@ -557,13 +559,6 @@ FORMAT_EXTENSIONS = {
     "transcript_json": ".json",
     "transcript_text": ".txt",
     "transcript_srt": ".srt",
-    "transcript_diarized_json": ".json",
-    "transcript_diarized_text": ".txt",
-    "transcript_translate_json": ".json",
-    "transcript_translate_text": ".txt",
-    "transcript_translate_srt": ".srt",
-    "transcript_translate_diarized_json": ".json",
-    "transcript_translate_diarized_text": ".txt",
 }
 
 for preset_name, preset in FFMPEG_PRESETS.items():
@@ -576,12 +571,6 @@ TRANSCRIPTION_FILE_SUFFIX = ".transcript.json"
 
 def media_type_for_format(media_format: str) -> str:
     normalized = normalize_media_format(media_format)
-    if normalized in {
-        "transcript_diarized_json",
-        "transcript_translate_json",
-        "transcript_translate_diarized_json",
-    }:
-        return "application/json"
     if normalized == "transcript_json":
         return "application/json"
     if normalized in TRANSCRIPTION_FORMATS - {"transcript_json"}:
@@ -1547,11 +1536,18 @@ def search_media(query: str, limit: int = 8) -> List[Dict[str, Any]]:
 def ensure_transcription_ready() -> None:
     if TRANSCRIPTION_API_KEY and (TRANSCRIPTION_MODEL or TRANSCRIPTION_MODEL_IDS):
         return
-    if WHISPER_ASR_URL:
-        return
     raise DownloadError(
-        "La transcripción no está disponible. Configura TRANSCRIPTION_API_KEY y TRANSCRIPTION_MODEL/TRANSCRIPTION_MODELS o un WHISPER_ASR_URL."
+        "La transcripción no está disponible. Configura TRANSCRIPTION_API_KEY y TRANSCRIPTION_MODEL/TRANSCRIPTION_MODELS."
     )
+
+
+def parse_bool_flag(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    text = str(value).strip().lower()
+    return text in {"1", "true", "yes", "on"}
 
 
 def _ensure_dir_writable(path: Path, purpose: str) -> None:
@@ -1764,16 +1760,9 @@ def estimate_transcription_stats(payload: Dict[str, Any]) -> Dict[str, int]:
 
 def render_transcription_payload(payload: Dict[str, Any], media_format: str) -> bytes:
     normalized = normalize_media_format(media_format)
-    if normalized in {
-        "transcript_json",
-        "transcript_diarized_json",
-        "transcript_translate_json",
-        "transcript_translate_diarized_json",
-    }:
+    if normalized == "transcript_json":
         text = json.dumps(payload, ensure_ascii=False, indent=2)
     elif normalized == "transcript_srt":
-        text = transcription_payload_to_srt(payload)
-    elif normalized == "transcript_translate_srt":
         text = transcription_payload_to_srt(payload)
     else:
         text = _transcription_text_only(payload)
@@ -1880,7 +1869,9 @@ def extract_audio_profile_from_file(source_path: Path, profile_key: str = "audio
 def _call_openai_transcription(
     file_path: Path, transcription_model: Optional[str] = None
 ) -> Dict[str, Any]:
-    model = resolve_transcription_model(transcription_model)
+    model = (transcription_model or "").strip()
+    if not model:
+        model = resolve_transcription_model(None)
     client = OpenAI(api_key=TRANSCRIPTION_API_KEY, base_url=TRANSCRIPTION_ENDPOINT)
     with file_path.open("rb") as audio_stream:
         response = client.audio.transcriptions.create(
@@ -1891,145 +1882,69 @@ def _call_openai_transcription(
     return _normalize_transcription_payload(response)
 
 
-def _whisper_asr_request_params(media_format: str) -> Dict[str, Any]:
-    normalized = normalize_media_format(media_format)
-    diarization = is_diarization_format(normalized)
-    translation = is_translation_format(normalized)
-    task = "transcribe"
-    output = "json"
-    # Siempre usar JSON para traducción, convertir a SRT después
-    if normalized in {"transcript_srt"} and not translation:
-        output = "srt"
-    elif normalized in {
-        "transcript_text",
-        "transcript_diarized_text",
-    } and not translation:
-        output = "txt"
-    elif normalized in {"transcript_translate_text", "transcript_translate_diarized_text"}:
-        output = "txt"
-    params = {"output": output, "task": task, "encode": "true"}
-    if diarization:
-        params["diarize"] = "true"
-        params["min_speakers"] = "2"
-    return params
-
-
-def _call_whisper_asr(file_path: Path, media_format: str) -> Dict[str, Any]:
-    if not WHISPER_ASR_URL:
-        raise DownloadError("Servicio whisper-asr no configurado")
-    base = WHISPER_ASR_URL.rstrip("/")
-    endpoint = f"{base}/asr"
-    params = _whisper_asr_request_params(media_format)
-    mime_type = "audio/mpeg" if file_path.suffix.lower() in {".mp3", ".mpeg"} else "application/octet-stream"
-    with file_path.open("rb") as audio_stream:
-        response = requests.post(
-            endpoint,
-            params=params,
-            files={"audio_file": (file_path.name, audio_stream, mime_type)},
-            timeout=WHISPER_ASR_TIMEOUT,
-        )
-    if response.status_code >= 400:
-        raise DownloadError(
-            f"whisper-asr respondió con un error HTTP {response.status_code}: {response.text.strip()}"
-        )
-    content_type = response.headers.get("content-type", "").lower()
-    if "application/json" in content_type:
-        try:
-            payload = response.json()
-        except ValueError as exc:  # pragma: no cover - depends on remote service
-            raise DownloadError("whisper-asr devolvió un JSON inválido") from exc
-    else:
-        text_content = response.text
-        payload = {"text": text_content.strip()}
-    return _normalize_transcription_payload(payload)
-
-
 def transcribe_audio_file(
-    file_path: Path, media_format: str, transcription_model: Optional[str] = None
+    file_path: Path,
+    media_format: str,
+    transcription_model: Optional[str] = None,
+    diarize: bool = False,
 ) -> Dict[str, Any]:
     ensure_transcription_ready()
-    Attempt = Tuple[str, Callable[[], Dict[str, Any]]]
-    attempts: List[Attempt] = []
-
     normalized_format = normalize_media_format(media_format)
-    translation = is_translation_format(normalized_format)
-    diarization = is_diarization_format(normalized_format)
-
-    if (translation or diarization) and not WHISPER_ASR_URL:
-        raise DownloadError("La diarización y la traducción requieren configurar WHISPER_ASR_URL")
-
-    if translation or diarization:
-        attempts.append(("whisper-asr", lambda: _call_whisper_asr(file_path, media_format)))
-    else:
-        if TRANSCRIPTION_API_KEY and TRANSCRIPTION_MODEL:
-            attempts.append(
-                (
-                    "openai",
-                    lambda: _call_openai_transcription(file_path, transcription_model),
-                )
-            )
-        if WHISPER_ASR_URL:
-            attempts.append(("whisper-asr", lambda: _call_whisper_asr(file_path, media_format)))
-
-    errors: List[str] = []
-    for provider_name, provider_call in attempts:
-        try:
-            return provider_call()
-        except Exception as exc:  # pragma: no cover - servicios externos
-            errors.append(f"{provider_name}: {exc}")
-
-    joined = "; ".join(errors)
-    raise DownloadError(f"No se pudo transcribir el audio: {joined or 'error desconocido'}")
+    if normalized_format not in TRANSCRIPTION_FORMATS:
+        raise DownloadError("Formato de transcripción no soportado")
+    selected_model = (
+        resolve_diarization_model(transcription_model)
+        if diarize
+        else resolve_transcription_model(transcription_model)
+    )
+    try:
+        return _call_openai_transcription(file_path, selected_model)
+    except Exception as exc:  # pragma: no cover - servicios externos
+        raise DownloadError(f"No se pudo transcribir el audio: {exc}") from exc
 
 
 def generate_transcription_file(
-    url: str, media_format: str, transcription_model: Optional[str] = None
+    url: str,
+    media_format: str,
+    transcription_model: Optional[str] = None,
+    diarize: bool = False,
 ) -> Tuple[Path, Dict]:
     if media_format not in TRANSCRIPTION_FORMATS:
         raise DownloadError("Formato de transcripción no soportado")
-    diarization = is_diarization_format(media_format)
-    translation = is_translation_format(media_format)
-    if (diarization or translation) and not WHISPER_ASR_URL:
-        raise DownloadError("La diarización y la traducción requieren configurar WHISPER_ASR_URL apuntando a whisper-asr")
     selected_model = (
-        "whisper-asr" if (diarization or translation) else resolve_transcription_model(transcription_model)
+        resolve_diarization_model(transcription_model)
+        if diarize
+        else resolve_transcription_model(transcription_model)
     )
-    diarization_suffix = f"diarization={int(diarization)}"
-    translation_suffix = f"translation={int(translation)}"
     model_suffix = f"model={selected_model}"
-    key = cache_key(
-        f"{url}::{diarization_suffix}::{translation_suffix}::{model_suffix}",
-        media_format,
-    )
+    diarize_suffix = f"diarize={int(diarize)}"
+    key = cache_key(f"{url}::{model_suffix}::{diarize_suffix}", media_format)
     purge_expired_entries()
     cached_path, cached_meta = fetch_cached_file(key)
     if cached_path:
         return cached_path, cached_meta or {}
 
     audio_path, audio_meta = download_media(url, "audio_med")
-    transcript_payload = transcribe_audio_file(audio_path, media_format, selected_model)
-    if translation:
-        transcript_payload = translate_transcription_payload(transcript_payload)
+    transcript_payload = transcribe_audio_file(
+        audio_path,
+        media_format,
+        selected_model,
+        diarize=diarize,
+    )
     transcription_stats = estimate_transcription_stats(transcript_payload)
 
-    # Determinar el formato de salida basado en el sufijo del media_format
-    if media_format.endswith("_json") or media_format == "transcript_json":
-        # Guardar como JSON (incluye translate, diarized, etc.)
-        if media_format == "transcript_json":
-            transcript_path = CACHE_DIR / f"{key}{TRANSCRIPTION_FILE_SUFFIX}"
-        else:
-            transcript_path = CACHE_DIR / f"{key}.json"
+    # Solo se soporta transcript_json, transcript_srt y transcript_text.
+    if media_format == "transcript_json":
+        transcript_path = CACHE_DIR / f"{key}{TRANSCRIPTION_FILE_SUFFIX}"
         transcript_path.write_text(
             json.dumps(transcript_payload, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
-    elif media_format.endswith("_srt") or media_format == "transcript_srt":
-        # Guardar como SRT (incluye translate, diarized, etc.)
+    elif media_format == "transcript_srt":
         transcript_path = CACHE_DIR / f"{key}.srt"
         srt_content = transcription_payload_to_srt(transcript_payload)
         transcript_path.write_text(srt_content, encoding="utf-8")
     else:
-        # Guardar como texto plano (incluye _text formats)
         text_only = transcript_payload.get("text") or ""
         if not isinstance(text_only, str):
             text_only = str(text_only)
@@ -2044,9 +1959,8 @@ def generate_transcription_file(
         "downloaded_at": time.time(),
         "cache_key": key,
         "transcription_stats": transcription_stats,
-        "diarization": bool(diarization),
-        "translation": bool(translation),
         "transcription_model": selected_model,
+        "diarization": bool(diarize),
     }
     metadata.update(
         {
@@ -2075,6 +1989,8 @@ async def index(request: Request) -> HTMLResponse:
             supported_services=SUPPORTED_SERVICES,
             transcription_models=TRANSCRIPTION_MODEL_OPTIONS,
             default_transcription_model=TRANSCRIPTION_MODEL,
+            diarization_models=DIARIZATION_MODEL_OPTIONS,
+            default_diarization_model=DIARIZATION_MODEL,
         ),
     )
 
@@ -2104,6 +2020,8 @@ async def transcription_models_endpoint() -> Dict[str, Any]:
     return {
         "default_model": TRANSCRIPTION_MODEL,
         "models": TRANSCRIPTION_MODEL_OPTIONS,
+        "default_diarization_model": DIARIZATION_MODEL,
+        "diarization_models": DIARIZATION_MODEL_OPTIONS,
     }
 
 
@@ -2177,13 +2095,17 @@ async def download_endpoint(
             ),
         )
     normalized_format = normalize_media_format(format_value)
+    diarize = parse_bool_flag(payload.get("diarize"))
     transcription_model_raw = payload.get("transcription_model")
     transcription_model = (
         str(transcription_model_raw).strip() if transcription_model_raw else None
     )
     if normalized_format in TRANSCRIPTION_FORMATS and transcription_model:
         try:
-            resolve_transcription_model(transcription_model)
+            if diarize:
+                resolve_diarization_model(transcription_model)
+            else:
+                resolve_transcription_model(transcription_model)
         except DownloadError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -2195,6 +2117,7 @@ async def download_endpoint(
                 url,
                 normalized_format,
                 transcription_model,
+                diarize,
             )
         elif normalized_format in FFMPEG_PRESETS:
             file_path, metadata = await run_in_threadpool(
@@ -2447,9 +2370,11 @@ async def transcribe_upload(
     request: Request,
     media_format: str = Form("transcript_text"),
     transcription_model: str = Form(""),
+    diarize: str = Form("false"),
     file: UploadFile = File(...),
 ):
     format_value = media_format.lower()
+    diarize_enabled = parse_bool_flag(diarize)
     requested_model = (transcription_model or "").strip() or None
     if format_value not in TRANSCRIPTION_FORMATS:
         raise HTTPException(
@@ -2458,19 +2383,14 @@ async def transcribe_upload(
         )
     if requested_model:
         try:
-            resolve_transcription_model(requested_model)
+            if diarize_enabled:
+                resolve_diarization_model(requested_model)
+            else:
+                resolve_transcription_model(requested_model)
         except DownloadError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not file.filename:
         raise HTTPException(status_code=400, detail="Incluye un archivo de audio o video")
-
-    diarization = is_diarization_format(format_value)
-    translation = is_translation_format(format_value)
-    if (diarization or translation) and not WHISPER_ASR_URL:
-        raise HTTPException(
-            status_code=400,
-            detail="La diarización y la traducción requieren configurar WHISPER_ASR_URL",
-        )
     temp_path: Optional[Path] = None
     try:
         ensure_storage_ready()
@@ -2484,11 +2404,8 @@ async def transcribe_upload(
                 audio_path,
                 format_value,
                 requested_model,
+                diarize_enabled,
             )
-            if translation:
-                payload = await run_in_threadpool(
-                    translate_transcription_payload, payload
-                )
         finally:
             try:
                 audio_path.unlink(missing_ok=True)

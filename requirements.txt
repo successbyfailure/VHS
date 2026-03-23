@@ -6,5 +6,4 @@ python-multipart
 certifi
 openai
 python-dotenv
-requests
 python-telegram-bot

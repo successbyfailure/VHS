@@ -453,6 +453,53 @@
         <section class="panel">
           <div class="panel-header">
             <div>
+              <h2 data-i18n="transcribe-url-panel-title">Transcribe una URL de video</h2>
+              <p class="hint" data-i18n="transcribe-url-panel-hint">Pega una URL y genera transcripción con el modelo que elijas.</p>
+            </div>
+          </div>
+          <form id="transcribe-url-form" class="upload-form">
+            <div>
+              <label for="transcribe-url-input" data-i18n="label-video-url">URL del vídeo</label>
+              <input
+                type="url"
+                id="transcribe-url-input"
+                name="url"
+                placeholder="https://"
+                data-i18n-placeholder="url-ph"
+                required
+              />
+            </div>
+            <div>
+              <label for="transcribe-url-format" data-i18n="label-format">Formato</label>
+              <select name="format" id="transcribe-url-format">
+                <optgroup label="Básica">
+                  <option value="transcript_text" selected>Texto (TXT)</option>
+                  <option value="transcript_json">Detallado con tiempos (JSON)</option>
+                  <option value="transcript_srt">Subtítulos (SRT)</option>
+                </optgroup>
+                <optgroup label="Con identificación de hablantes">
+                  <option value="transcript_text" data-diarize="true">Texto con hablantes (TXT)</option>
+                  <option value="transcript_json" data-diarize="true">Detallado con hablantes (JSON)</option>
+                </optgroup>
+              </select>
+            </div>
+            <div>
+              <label for="transcribe-url-model" data-i18n="label-transcription-model">Modelo de transcripción</label>
+              <select name="transcription_model" id="transcribe-url-model"></select>
+            </div>
+            <button type="submit" data-i18n="btn-transcribe-url">Transcribir URL</button>
+            <div class="progress" id="transcribe-url-progress" hidden>
+              <p class="progress-label" id="transcribe-url-progress-label">Preparando…</p>
+              <div class="progress-bar">
+                <div class="progress-fill" id="transcribe-url-progress-fill"></div>
+              </div>
+            </div>
+            <p class="status" id="transcribe-url-status"></p>
+          </form>
+        </section>
+        <section class="panel">
+          <div class="panel-header">
+            <div>
               <h2 data-i18n="transcribe-panel-title">Transcribe un archivo local</h2>
               <p class="hint" data-i18n="transcribe-panel-hint">Sube audio o video corto y obtén transcripción directa.</p>
             </div>
@@ -477,17 +524,8 @@
                   <option value="transcript_srt">Subtítulos (SRT)</option>
                 </optgroup>
                 <optgroup label="Con identificación de hablantes">
-                  <option value="transcript_diarized_text">Texto con hablantes (TXT)</option>
-                  <option value="transcript_diarized_json">Detallado con hablantes (JSON)</option>
-                </optgroup>
-                <optgroup label="Traducción al español">
-                  <option value="transcript_translate_text">Texto (TXT)</option>
-                  <option value="transcript_translate_srt">Subtítulos (SRT)</option>
-                  <option value="transcript_translate_json">Detallado con tiempos (JSON)</option>
-                </optgroup>
-                <optgroup label="Traducción al español + hablantes">
-                  <option value="transcript_translate_diarized_text">Texto con hablantes (TXT)</option>
-                  <option value="transcript_translate_diarized_json">Detallado con hablantes (JSON)</option>
+                  <option value="transcript_text" data-diarize="true">Texto con hablantes (TXT)</option>
+                  <option value="transcript_json" data-diarize="true">Detallado con hablantes (JSON)</option>
                 </optgroup>
               </select>
             </div>
@@ -652,6 +690,8 @@
     <script>
       const TRANSCRIPTION_MODEL_OPTIONS = {{ transcription_models | tojson }};
       const DEFAULT_TRANSCRIPTION_MODEL = {{ default_transcription_model | tojson }};
+      const DIARIZATION_MODEL_OPTIONS = {{ diarization_models | tojson }};
+      const DEFAULT_DIARIZATION_MODEL = {{ default_diarization_model | tojson }};
       const form = document.getElementById('download-form');
       const statusEl = document.getElementById('status');
       const ffmpegForm = document.getElementById('ffmpeg-form');
@@ -688,6 +728,13 @@
       const uploadProgressContainer = document.getElementById('upload-progress');
       const uploadProgressLabel = document.getElementById('upload-progress-label');
       const uploadProgressFill = document.getElementById('upload-progress-fill');
+      const transcribeUrlForm = document.getElementById('transcribe-url-form');
+      const transcribeUrlStatusEl = document.getElementById('transcribe-url-status');
+      const transcribeUrlProgressContainer = document.getElementById('transcribe-url-progress');
+      const transcribeUrlProgressLabel = document.getElementById('transcribe-url-progress-label');
+      const transcribeUrlProgressFill = document.getElementById('transcribe-url-progress-fill');
+      const transcribeUrlFormatSelect = document.getElementById('transcribe-url-format');
+      const transcribeUrlModelSelect = document.getElementById('transcribe-url-model');
       const uploadFileInput = document.getElementById('upload-file');
       const uploadFormatSelect = document.getElementById('upload-format');
       const uploadTranscriptionModelSelect = document.getElementById('upload-transcription-model');
@@ -712,7 +759,11 @@
           'btn-refresh': 'Actualizar',
           'transcribe-panel-title': 'Transcribe un archivo local',
           'transcribe-panel-hint': 'Sube audio o video corto y obtén transcripción directa.',
+          'transcribe-url-panel-title': 'Transcribe una URL de video',
+          'transcribe-url-panel-hint': 'Pega una URL y genera transcripción con el modelo que elijas.',
+          'label-video-url': 'URL del vídeo',
           'label-file': 'Archivo', 'label-format': 'Formato', 'btn-transcribe': 'Transcribir archivo',
+          'btn-transcribe-url': 'Transcribir URL',
           'label-transcription-model': 'Modelo de transcripción',
           'ffmpeg-panel-title': 'Operaciones con ffmpeg',
           'ffmpeg-panel-hint': 'Convierte un archivo local con los presets <code>ffmpeg_*</code>. Ideal para generar masters ligeros sin salir del navegador.',
@@ -770,7 +821,11 @@
           'btn-refresh': 'Refresh',
           'transcribe-panel-title': 'Transcribe a local file',
           'transcribe-panel-hint': 'Upload a short audio or video and get a direct transcription.',
+          'transcribe-url-panel-title': 'Transcribe a video URL',
+          'transcribe-url-panel-hint': 'Paste a URL and generate a transcription with your selected model.',
+          'label-video-url': 'Video URL',
           'label-file': 'File', 'label-format': 'Format', 'btn-transcribe': 'Transcribe file',
+          'btn-transcribe-url': 'Transcribe URL',
           'label-transcription-model': 'Transcription model',
           'ffmpeg-panel-title': 'ffmpeg operations',
           'ffmpeg-panel-hint': 'Convert a local file using <code>ffmpeg_*</code> presets. Great for lightweight masters without leaving the browser.',
@@ -834,31 +889,16 @@
           {
             es: 'Básica', en: 'Basic',
             options: [
-              { value: 'transcript_text', es: 'Texto (TXT)', en: 'Plain text (TXT)' },
-              { value: 'transcript_json', es: 'Detallado con tiempos (JSON)', en: 'Detailed with timestamps (JSON)' },
-              { value: 'transcript_srt', es: 'Subtítulos (SRT)', en: 'Subtitles (SRT)' },
+              { value: 'transcript_text', es: 'Texto (TXT)', en: 'Plain text (TXT)', diarize: false },
+              { value: 'transcript_json', es: 'Detallado con tiempos (JSON)', en: 'Detailed with timestamps (JSON)', diarize: false },
+              { value: 'transcript_srt', es: 'Subtítulos (SRT)', en: 'Subtitles (SRT)', diarize: false },
             ],
           },
           {
             es: 'Con identificación de hablantes', en: 'With speaker identification',
             options: [
-              { value: 'transcript_diarized_text', es: 'Texto con hablantes (TXT)', en: 'Text with speakers (TXT)' },
-              { value: 'transcript_diarized_json', es: 'Detallado con hablantes (JSON)', en: 'Detailed with speakers (JSON)' },
-            ],
-          },
-          {
-            es: 'Traducción al español', en: 'Translation to Spanish',
-            options: [
-              { value: 'transcript_translate_text', es: 'Texto (TXT)', en: 'Plain text (TXT)' },
-              { value: 'transcript_translate_srt', es: 'Subtítulos (SRT)', en: 'Subtitles (SRT)' },
-              { value: 'transcript_translate_json', es: 'Detallado con tiempos (JSON)', en: 'Detailed with timestamps (JSON)' },
-            ],
-          },
-          {
-            es: 'Traducción al español + hablantes', en: 'Translation to Spanish + speakers',
-            options: [
-              { value: 'transcript_translate_diarized_text', es: 'Texto con hablantes (TXT)', en: 'Text with speakers (TXT)' },
-              { value: 'transcript_translate_diarized_json', es: 'Detallado con hablantes (JSON)', en: 'Detailed with speakers (JSON)' },
+              { value: 'transcript_text', es: 'Texto con hablantes (TXT)', en: 'Text with speakers (TXT)', diarize: true },
+              { value: 'transcript_json', es: 'Detallado con hablantes (JSON)', en: 'Detailed with speakers (JSON)', diarize: true },
             ],
           },
         ],
@@ -920,16 +960,18 @@
               const option = document.createElement('option');
               option.value = opt.value;
               option.textContent = opt[currentLang] || opt.es;
+              option.dataset.diarize = opt.diarize ? 'true' : 'false';
               if (opt.value === savedValue) option.selected = true;
               group.appendChild(option);
             }
             formatProfileSelect.appendChild(group);
           } else {
-            const option = document.createElement('option');
-            option.value = item.value;
-            option.textContent = item[currentLang] || item.es;
-            if (item.value === savedValue) option.selected = true;
-            formatProfileSelect.appendChild(option);
+          const option = document.createElement('option');
+          option.value = item.value;
+          option.textContent = item[currentLang] || item.es;
+          option.dataset.diarize = item.diarize ? 'true' : 'false';
+          if (item.value === savedValue) option.selected = true;
+          formatProfileSelect.appendChild(option);
           }
         }
       }
@@ -945,6 +987,7 @@
             const option = document.createElement('option');
             option.value = opt.value;
             option.textContent = opt[currentLang] || opt.es;
+            option.dataset.diarize = opt.diarize ? 'true' : 'false';
             if (opt.value === savedValue) option.selected = true;
             optgroup.appendChild(option);
           }
@@ -952,6 +995,29 @@
         }
         if (!uploadFormatSelect.value) {
           const first = uploadFormatSelect.querySelector('option');
+          if (first) first.selected = true;
+        }
+      }
+
+      function rebuildUrlTranscribeFormat() {
+        if (!transcribeUrlFormatSelect) return;
+        const savedValue = transcribeUrlFormatSelect.value;
+        transcribeUrlFormatSelect.innerHTML = '';
+        for (const group of FORMAT_PROFILES.transcript) {
+          const optgroup = document.createElement('optgroup');
+          optgroup.label = group[currentLang] || group.es;
+          for (const opt of group.options) {
+            const option = document.createElement('option');
+            option.value = opt.value;
+            option.textContent = opt[currentLang] || opt.es;
+            option.dataset.diarize = opt.diarize ? 'true' : 'false';
+            if (opt.value === savedValue) option.selected = true;
+            optgroup.appendChild(option);
+          }
+          transcribeUrlFormatSelect.appendChild(optgroup);
+        }
+        if (!transcribeUrlFormatSelect.value) {
+          const first = transcribeUrlFormatSelect.querySelector('option');
           if (first) first.selected = true;
         }
       }
@@ -973,31 +1039,51 @@
         }
       }
 
-      function rebuildTranscriptionModelSelect(selectEl) {
-        if (!selectEl) return;
-        const savedValue = selectEl.value || DEFAULT_TRANSCRIPTION_MODEL || '';
-        selectEl.innerHTML = '';
-        for (const model of TRANSCRIPTION_MODEL_OPTIONS || []) {
-          const option = document.createElement('option');
-          option.value = model.id;
-          option.textContent = model.label ? `${model.id} - ${model.label}` : model.id;
-          if (model.id === savedValue) {
-            option.selected = true;
-          }
-          selectEl.appendChild(option);
-        }
-        if (!selectEl.value) {
-          const first = selectEl.querySelector('option');
-          if (first) {
-            first.selected = true;
-          }
-        }
-      }
-
       function updateTranscriptionModelVisibility() {
         if (!downloadTranscriptionModelWrap) return;
         const show = (formatTypeSelect?.value || '') === 'transcript';
         downloadTranscriptionModelWrap.hidden = !show;
+      }
+
+      function wantsDiarization(formatSelect) {
+        const option = formatSelect?.selectedOptions?.[0];
+        return option?.dataset?.diarize === 'true';
+      }
+
+      function getModelOptionsForFormat(formatSelect) {
+        return wantsDiarization(formatSelect)
+          ? (DIARIZATION_MODEL_OPTIONS || [])
+          : (TRANSCRIPTION_MODEL_OPTIONS || []);
+      }
+
+      function getDefaultModelForFormat(formatSelect) {
+        return wantsDiarization(formatSelect)
+          ? (DEFAULT_DIARIZATION_MODEL || '')
+          : (DEFAULT_TRANSCRIPTION_MODEL || '');
+      }
+
+      function rebuildTranscriptionModelSelect(selectEl, formatSelect) {
+        if (!selectEl) return;
+        const options = getModelOptionsForFormat(formatSelect);
+        const savedValue = selectEl.value || getDefaultModelForFormat(formatSelect);
+        selectEl.innerHTML = '';
+        for (const model of options) {
+          const option = document.createElement('option');
+          option.value = model.id;
+          option.textContent = model.label ? `${model.id} - ${model.label}` : model.id;
+          if (model.id === savedValue) option.selected = true;
+          selectEl.appendChild(option);
+        }
+        if (!selectEl.value) {
+          const first = selectEl.querySelector('option');
+          if (first) first.selected = true;
+        }
+      }
+
+      function resolveTranscriptionModelForRequest(modelSelect, formatSelect) {
+        const selected = (modelSelect?.value || '').trim();
+        if (selected) return selected;
+        return getDefaultModelForFormat(formatSelect);
       }
 
       function setLanguage(lang) {
@@ -1006,9 +1092,11 @@
         applyTranslations();
         populateFormatProfiles(formatTypeSelect?.value || 'video');
         rebuildUploadFormat();
+        rebuildUrlTranscribeFormat();
         rebuildFfmpegFormat();
-        rebuildTranscriptionModelSelect(uploadTranscriptionModelSelect);
-        rebuildTranscriptionModelSelect(downloadTranscriptionModelSelect);
+        rebuildTranscriptionModelSelect(uploadTranscriptionModelSelect, uploadFormatSelect);
+        rebuildTranscriptionModelSelect(transcribeUrlModelSelect, transcribeUrlFormatSelect);
+        rebuildTranscriptionModelSelect(downloadTranscriptionModelSelect, formatProfileSelect);
         updateTranscriptionModelVisibility();
         if (usageChart) {
           usageChart.data.datasets.forEach((ds, i) => {
@@ -1026,13 +1114,25 @@
       // initialise selects and apply translations on load
       formatTypeSelect?.addEventListener('change', () => {
         populateFormatProfiles(formatTypeSelect.value);
+        rebuildTranscriptionModelSelect(downloadTranscriptionModelSelect, formatProfileSelect);
         updateTranscriptionModelVisibility();
+      });
+      formatProfileSelect?.addEventListener('change', () => {
+        rebuildTranscriptionModelSelect(downloadTranscriptionModelSelect, formatProfileSelect);
+      });
+      uploadFormatSelect?.addEventListener('change', () => {
+        rebuildTranscriptionModelSelect(uploadTranscriptionModelSelect, uploadFormatSelect);
+      });
+      transcribeUrlFormatSelect?.addEventListener('change', () => {
+        rebuildTranscriptionModelSelect(transcribeUrlModelSelect, transcribeUrlFormatSelect);
       });
       populateFormatProfiles(formatTypeSelect?.value || 'video');
       rebuildUploadFormat();
+      rebuildUrlTranscribeFormat();
       rebuildFfmpegFormat();
-      rebuildTranscriptionModelSelect(uploadTranscriptionModelSelect);
-      rebuildTranscriptionModelSelect(downloadTranscriptionModelSelect);
+      rebuildTranscriptionModelSelect(uploadTranscriptionModelSelect, uploadFormatSelect);
+      rebuildTranscriptionModelSelect(transcribeUrlModelSelect, transcribeUrlFormatSelect);
+      rebuildTranscriptionModelSelect(downloadTranscriptionModelSelect, formatProfileSelect);
       updateTranscriptionModelVisibility();
       applyTranslations();
       const panels = document.querySelectorAll('.tab-panel');
@@ -1123,6 +1223,11 @@
         uploadProgressLabel,
         uploadProgressFill,
       );
+      const transcribeUrlProgress = createProgressTracker(
+        transcribeUrlProgressContainer,
+        transcribeUrlProgressLabel,
+        transcribeUrlProgressFill,
+      );
 
       function triggerBlobDownload(blob, filename) {
         const url = window.URL.createObjectURL(blob);
@@ -1198,7 +1303,7 @@
         if (!formElement || !statusElement || !tracker) {
           return;
         }
-        const { detectTranscription = false } = options;
+        const { detectTranscription = false, transcriptionModelSelect = downloadTranscriptionModelSelect } = options;
         formElement.addEventListener('submit', async (event) => {
           event.preventDefault();
           const formData = new FormData(formElement);
@@ -1216,9 +1321,16 @@
             source: 'web',
           };
           if (detectTranscription && format.startsWith('transcript')) {
-            const selectedModel = downloadTranscriptionModelSelect?.value || '';
+            const formatSelect = formElement.querySelector('select[name="format"]');
+            const selectedModel = resolveTranscriptionModelForRequest(
+              transcriptionModelSelect,
+              formatSelect,
+            );
             if (selectedModel) {
               payload.transcription_model = selectedModel;
+            }
+            if (wantsDiarization(formatSelect)) {
+              payload.diarize = true;
             }
           }
           try {
@@ -1237,6 +1349,10 @@
       }
 
       setupDownloadHandler(form, statusEl, downloadProgress, { detectTranscription: true });
+      setupDownloadHandler(transcribeUrlForm, transcribeUrlStatusEl, transcribeUrlProgress, {
+        detectTranscription: true,
+        transcriptionModelSelect: transcribeUrlModelSelect,
+      });
 
       ffmpegForm?.addEventListener('submit', async (event) => {
         event.preventDefault();
@@ -1273,9 +1389,15 @@
         const formData = new FormData();
         formData.append('file', uploadFileInput.files[0]);
         formData.append('media_format', uploadFormatSelect?.value || 'transcript_text');
-        const selectedModel = uploadTranscriptionModelSelect?.value || '';
+        const selectedModel = resolveTranscriptionModelForRequest(
+          uploadTranscriptionModelSelect,
+          uploadFormatSelect,
+        );
         if (selectedModel) {
           formData.append('transcription_model', selectedModel);
+        }
+        if (wantsDiarization(uploadFormatSelect)) {
+          formData.append('diarize', 'true');
         }
         uploadProgress.reset();
         uploadProgress.start(getProgressSteps().transcription);

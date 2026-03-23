@@ -18,9 +18,6 @@ Transcripciones (todos los formatos funcionan correctamente desde v0.2.9):
 - `transcript_json`: salida JSON completa con segmentos y marcas de tiempo.
 - `transcript_text`: solo el texto plano consolidado.
 - `transcript_srt`: archivo SRT listo para reproductores.
-- `transcript_diarized_json`, `transcript_diarized_text`: transcripción con etiquetas de hablante (requiere `WHISPER_ASR_URL` apuntando a whisper-asr).
-- `transcript_translate_json`, `transcript_translate_text`, `transcript_translate_srt`: traducción al español (whisper-asr). Los formatos JSON y SRT ahora generan correctamente archivos `.json` y `.srt` respectivamente.
-- `transcript_translate_diarized_json`, `transcript_translate_diarized_text`: traducción al español con etiquetas de hablante (whisper-asr).
 
 ## Perfiles ffmpeg y transcripción local
 
@@ -29,7 +26,7 @@ Los endpoints de conversión y transcripción aceptan los siguientes formatos:
 - `ffmpeg_480p`, `ffmpeg_720p`, `ffmpeg_1080p`, `ffmpeg_1440p`, `ffmpeg_3840p`: MP4 con escalado y bitrates objetivo (2.5 Mbps, 4 Mbps, 6.5 Mbps, 12 Mbps, 20 Mbps respectivamente; audio AAC entre 128–256 kbps).
 - `ffmpeg_wav`: WAV sin pérdidas (44.1 kHz, estéreo).
 - `ffmpeg_mp3-192`, `ffmpeg_mp3-128`, `ffmpeg_mp3-96`, `ffmpeg_mp3-64`: MP3 con los bitrates indicados.
-- `transcript_json`, `transcript_text`, `transcript_srt`, `transcript_diarized_json`, `transcript_diarized_text`, `transcript_translate_json`, `transcript_translate_text`, `transcript_translate_srt`, `transcript_translate_diarized_json`, `transcript_translate_diarized_text`: salidas de transcripción.
+- `transcript_json`, `transcript_text`, `transcript_srt`: salidas de transcripción.
 
 ## Endpoints principales
 
@@ -46,9 +43,9 @@ Body JSON:
 
 - Acepta cualquiera de los formatos listados arriba (video/audio/ffmpeg/transcripción).
 - Para formatos `transcript_*` puedes enviar opcionalmente `transcription_model` para forzar el modelo de STT configurado en `TRANSCRIPTION_MODELS`.
+- Para diarización puedes enviar `diarize=true`; en ese caso el modelo se valida contra `DIARIZATION_MODELS`.
 - Guarda metadatos en caché con resolución (`width`, `height`), bitrates (`video_bitrate_kbps`, `audio_bitrate_kbps`), identificador de formato (`format_id`) y tamaño (`filesize_bytes`).
 - Si la descarga ya existe en caché y no ha expirado, se reutiliza.
-- Para obtener etiquetas de hablante usa `media_format=transcript_diarized_json` o `media_format=transcript_diarized_text` (requiere whisper-asr configurado como `WHISPER_ASR_URL`). Las traducciones `transcript_translate_*` se gestionan vía whisper-asr con destino español.
 
 ### Recodificar un archivo local con ffmpeg
 `POST /api/ffmpeg/upload`
@@ -59,9 +56,9 @@ Body JSON:
 ### Transcribir un archivo local
 `POST /api/transcribe/upload`
 
-- `multipart/form-data` con campos `file` y `media_format` (`transcript_json`, `transcript_text`, `transcript_srt`, `transcript_diarized_json`, `transcript_diarized_text`, `transcript_translate_json`, `transcript_translate_text`, `transcript_translate_srt`, `transcript_translate_diarized_json`, `transcript_translate_diarized_text`).
+- `multipart/form-data` con campos `file` y `media_format` (`transcript_json`, `transcript_text`, `transcript_srt`).
 - Campo opcional `transcription_model` para elegir el modelo STT (solo modelos permitidos por `TRANSCRIPTION_MODELS`).
-- Usa `transcript_diarized_*` para etiquetas de hablante y `transcript_translate_*` para traducir al español mediante whisper-asr.
+- Campo opcional `diarize` (`true`/`false`) para activar diarización; al activarlo se usan modelos de `DIARIZATION_MODELS`.
 - Usa el mismo pipeline de transcripción que el importador remoto y devuelve texto, JSON o SRT según se solicite.
 
 ### Modelos de transcripción disponibles
@@ -70,6 +67,8 @@ Body JSON:
 - Devuelve el modelo por defecto y la lista de opciones visibles en UI:
   - `default_model`
   - `models[]` con `id` y `label`
+  - `default_diarization_model`
+  - `diarization_models[]` con `id` y `label`
 
 ### Inspeccionar sin descargar
 `POST /api/probe`
@@ -111,15 +110,8 @@ Body JSON:
 - Las conversiones ffmpeg añaden los objetivos (`target_height`, `target_video_bitrate_kbps`, `target_audio_bitrate_kbps`) y una copia compacta de los metadatos del archivo fuente.
 - Las transcripciones guardan estadísticas (`word_count`, `token_count`) junto al formato solicitado.
 
-## Correcciones en v0.2.9
+## Nota de compatibilidad
 
-### Formatos de transcripción corregidos
-
-En versiones anteriores a 0.2.9, algunos formatos de transcripción se guardaban con extensiones incorrectas:
-- `transcript_translate_json` → se guardaba como `.txt` (ahora `.json` ✅)
-- `transcript_translate_srt` → se guardaba como texto plano `.txt` (ahora formato SRT válido `.srt` ✅)
-- `transcript_diarized_json` → se guardaba como `.txt` (ahora `.json` ✅)
-
-**Estado actual**: Todos los formatos de transcripción funcionan correctamente y generan archivos con las extensiones y Content-Types apropiados.
+La rama actual elimina el soporte de `whisper-asr` y los formatos asociados de diarización/traducción (`transcript_diarized_*`, `transcript_translate_*`).
 
 Para más detalles sobre testing y ejemplos de uso, ver `test_data/TRANSCRIPTION_TESTING.md`.

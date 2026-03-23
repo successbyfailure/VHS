@@ -1,6 +1,6 @@
 # VHS · Video Harvester Service
 
-**Versión**: 0.2.15
+**Versión**: 0.2.19
 
 Servicio FastAPI que descarga, convierte y transcribe vídeos o audios mediante `yt-dlp` y perfiles rápidos de `ffmpeg`. Este directorio está listo para vivir como repositorio independiente y generar su propia imagen de Docker.
 
@@ -17,7 +17,7 @@ Copia `example.env` a `.env` y ajusta las rutas o claves necesarias:
 cp example.env .env
 ```
 
-Las variables más relevantes son `CACHE_DIR`, `USAGE_LOG_PATH`, las opciones de `TRANSCRIPTION_*` y `WHISPER_ASR_*`.
+Las variables más relevantes son `CACHE_DIR`, `USAGE_LOG_PATH` y las opciones de `TRANSCRIPTION_*`/`DIARIZATION_*`.
 
 Para evitar bloqueos de YouTube es posible ajustar:
 
@@ -25,12 +25,6 @@ Para evitar bloqueos de YouTube es posible ajustar:
 - `YTDLP_BOT_PROTECTION_RETRIES`: número de intentos con agentes nuevos ante un desafío de inicio de sesión (por defecto, 3).
 - `YTDLP_BOT_PROTECTION_DELAY`: segundos de espera entre intentos (por defecto, 6).
 - `YTDLP_EXTRACTOR_ARGS`: argumentos adicionales para yt-dlp en formato JSON. Por defecto se usa `{ "youtube": ["player_client=default"] }` y se habilita el componente remoto `ejs:github` con Node.js para resolver desafíos JS.
-
-## Diarización y traducción con whisper-asr
-
-Configura `WHISPER_ASR_URL` para habilitar las variantes de diarización (`transcript_diarized_json`, `transcript_diarized_text`)
-y las traducciones al español (`transcript_translate_*` y `transcript_translate_diarized_*`) disponibles en `/api/download`
-o `/api/transcribe/upload`. Los resultados incluirán etiquetas de hablante siempre que el endpoint whisper-asr devuelva esa información.
 
 ## Ejecución local
 

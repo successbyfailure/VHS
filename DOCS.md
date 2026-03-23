@@ -60,12 +60,10 @@ TRANSCRIPTION_ENDPOINT=https://api.openai.com/v1
 TRANSCRIPTION_API_KEY=sk-...
 TRANSCRIPTION_MODEL=openai/whisper-large-v3-turbo
 TRANSCRIPTION_MODELS=openai/whisper-large-v3-turbo - best, nvidia/parakeet-tdt-0.6b-v3 - fast, nekusu/faster-whisper-large-v3-turbo-latam-int8-ct2 - Español
+DIARIZATION_MODEL=openai/whisper-large-v3-turbo::diarize
+DIARIZATION_MODELS=openai/whisper-large-v3-turbo::diarize - best (diarized), nvidia/parakeet-tdt-0.6b-v3::diarize - fast (diarized), nekusu/faster-whisper-large-v3-turbo-latam-int8-ct2::diarize - Español (diarized)
 
-# Whisper-ASR para diarización y traducción
-WHISPER_ASR_URL=http://localhost:9900
-WHISPER_ASR_TIMEOUT=600
-
-# Traducción con LLM
+# Traducción con LLM (opcional para utilidades como el bot de Telegram)
 TRANSLATION_MODEL=gpt-4o-mini
 # TRANSLATION_SYSTEM_PROMPT=... (opcional)
 # TRANSLATION_USER_PROMPT_TEMPLATE=... (opcional)
@@ -82,22 +80,9 @@ TRANSLATION_MODEL=gpt-4o-mini
 - Caché con TTL configurable
 
 ### ✅ Transcripción
-- Providers: OpenAI-compatible, whisper-asr
+- Provider: OpenAI-compatible (modelo configurable)
 - Formatos: JSON (completo), SRT (subtítulos), TXT (texto plano)
 - Word-level timestamps y scores de confianza
-- Fallback automático entre providers
-
-### ✅ Traducción al Español
-- Motor: LLM configurable (gpt-4o-mini, mistral:7b, etc.)
-- Traducción segmento por segmento
-- Preserva timestamps para formato SRT
-- Prompts personalizables
-
-### ✅ Diarización (Identificación de Hablantes)
-- Via whisper-asr
-- Etiquetas: SPEAKER_00, SPEAKER_01, etc.
-- Word-level speaker attribution
-- Disponible en JSON y texto
 
 ### ✅ Conversión con FFmpeg
 - Perfiles: 480p, 720p, 1080p, 1440p, 4K
@@ -123,19 +108,6 @@ TRANSLATION_MODEL=gpt-4o-mini
 - `transcript_json` - JSON completo con timestamps
 - `transcript_text` - Texto plano
 - `transcript_srt` - Subtítulos SRT
-
-### Transcripción con Diarización
-- `transcript_diarized_json` - JSON con speakers
-- `transcript_diarized_text` - Texto con speakers
-
-### Traducción al Español
-- `transcript_translate_json` - JSON traducido
-- `transcript_translate_text` - Texto traducido
-- `transcript_translate_srt` - Subtítulos SRT en español
-
-### Traducción + Diarización
-- `transcript_translate_diarized_json` - JSON traducido con speakers
-- `transcript_translate_diarized_text` - Texto traducido con speakers
 
 ### FFmpeg
 - `ffmpeg_480p`, `ffmpeg_720p`, `ffmpeg_1080p`, `ffmpeg_1440p`, `ffmpeg_3840p`
@@ -175,26 +147,7 @@ curl -X POST http://localhost:8601/api/download \
   -H "Content-Type: application/json" \
   -d '{"url": "https://youtube.com/watch?v=...", "media_format": "transcript_json"}'
 
-# Traducir a español (SRT)
-curl -X POST http://localhost:8601/api/download \
-  -H "Content-Type: application/json" \
-  -d '{"url": "https://youtube.com/watch?v=...", "media_format": "transcript_translate_srt"}'
 ```
-
----
-
-## 🔄 Changelog
-
-### v0.2.9 (2026-01-10)
-- ✅ Corregida detección de formatos de transcripción
-- ✅ `transcript_translate_json` ahora genera archivos `.json` (antes `.txt`)
-- ✅ `transcript_translate_srt` ahora genera formato SRT válido (antes texto plano)
-- ✅ `transcript_diarized_json` ahora usa extensión `.json` (antes `.txt`)
-- ✅ Todos los formatos generan Content-Type HTTP correcto
-- 📝 Documentación actualizada y consolidada
-
-### Versiones anteriores
-Ver commits en el repositorio para historial completo.
 
 ---
 
@@ -203,8 +156,8 @@ Ver commits en el repositorio para historial completo.
 ### Problemas Comunes
 
 **Error de transcripción**: Verificar que `TRANSCRIPTION_API_KEY` esté configurado
-**Diarización no funciona**: Asegurar que `WHISPER_ASR_URL` apunte a instancia whisper-asr
-**Traducción falla**: Verificar que `TRANSLATION_MODEL` sea compatible con chat (no whisper)
+**Modelo no permitido**: Revisar `TRANSCRIPTION_MODELS` o `DIARIZATION_MODELS` según el caso
+**Traducción del bot falla**: Verificar que `TRANSLATION_MODEL` sea compatible con chat
 **YouTube bloquea descargas**: Ajustar `YTDLP_USER_AGENT` y `YTDLP_EXTRACTOR_ARGS`
 
 ### Logs
