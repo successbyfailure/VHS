@@ -93,7 +93,69 @@ else:
     YTDLP_EXTRACTOR_ARGS = {"youtube": ["player_client=default"]}
 TRANSCRIPTION_ENDPOINT = os.getenv("TRANSCRIPTION_ENDPOINT", "https://api.openai.com/v1")
 TRANSCRIPTION_API_KEY = os.getenv("TRANSCRIPTION_API_KEY")
-TRANSCRIPTION_MODEL = os.getenv("TRANSCRIPTION_MODEL", "gpt-4o-mini-transcribe")
+_TRANSCRIPTION_MODEL_RAW = os.getenv("TRANSCRIPTION_MODEL", "gpt-4o-mini-transcribe").strip()
+_TRANSCRIPTION_MODELS_RAW = os.getenv("TRANSCRIPTION_MODELS", "").strip()
+
+
+def _parse_transcription_models(raw_models: str, fallback_model: str) -> List[Dict[str, str]]:
+    # Formato soportado: model-id - etiqueta, model-id::etiqueta o solo model-id.
+    parsed: List[Dict[str, str]] = []
+    if raw_models:
+        for item in raw_models.split(","):
+            value = item.strip()
+            if not value:
+                continue
+            model_id = value
+            label = ""
+            if "::" in value:
+                model_id, label = value.split("::", 1)
+            elif " - " in value:
+                model_id, label = value.split(" - ", 1)
+            model_id = model_id.strip()
+            label = label.strip()
+            if model_id:
+                parsed.append({"id": model_id, "label": label or model_id})
+    if not parsed and fallback_model:
+        parsed = [{"id": fallback_model, "label": fallback_model}]
+
+    deduped: List[Dict[str, str]] = []
+    seen: set[str] = set()
+    for option in parsed:
+        model_id = option["id"]
+        if model_id in seen:
+            continue
+        seen.add(model_id)
+        deduped.append(option)
+    return deduped
+
+
+TRANSCRIPTION_MODEL_OPTIONS = _parse_transcription_models(
+    _TRANSCRIPTION_MODELS_RAW, _TRANSCRIPTION_MODEL_RAW
+)
+TRANSCRIPTION_MODEL_IDS = [option["id"] for option in TRANSCRIPTION_MODEL_OPTIONS]
+if _TRANSCRIPTION_MODEL_RAW and _TRANSCRIPTION_MODEL_RAW in TRANSCRIPTION_MODEL_IDS:
+    TRANSCRIPTION_MODEL = _TRANSCRIPTION_MODEL_RAW
+elif TRANSCRIPTION_MODEL_IDS:
+    TRANSCRIPTION_MODEL = TRANSCRIPTION_MODEL_IDS[0]
+else:
+    TRANSCRIPTION_MODEL = ""
+
+
+def resolve_transcription_model(requested_model: Optional[str]) -> str:
+    selected = (requested_model or "").strip()
+    if selected:
+        if TRANSCRIPTION_MODEL_IDS and selected not in TRANSCRIPTION_MODEL_IDS:
+            raise DownloadError(
+                "Modelo de transcripción no permitido. Revisa TRANSCRIPTION_MODELS."
+            )
+        return selected
+    if TRANSCRIPTION_MODEL:
+        return TRANSCRIPTION_MODEL
+    raise DownloadError(
+        "La transcripción no está disponible. Configura TRANSCRIPTION_MODEL o TRANSCRIPTION_MODELS."
+    )
+
+
 WHISPER_ASR_URL = os.getenv("WHISPER_ASR_URL")
 WHISPER_ASR_TIMEOUT = int(os.getenv("WHISPER_ASR_TIMEOUT", "600"))
 FFMPEG_BINARY = os.getenv("FFMPEG_BINARY", "ffmpeg")
@@ -1483,12 +1545,12 @@ def search_media(query: str, limit: int = 8) -> List[Dict[str, Any]]:
 
 
 def ensure_transcription_ready() -> None:
-    if TRANSCRIPTION_API_KEY and TRANSCRIPTION_MODEL:
+    if TRANSCRIPTION_API_KEY and (TRANSCRIPTION_MODEL or TRANSCRIPTION_MODEL_IDS):
         return
     if WHISPER_ASR_URL:
         return
     raise DownloadError(
-        "La transcripción no está disponible. Configura TRANSCRIPTION_API_KEY y TRANSCRIPTION_MODEL o un WHISPER_ASR_URL."
+        "La transcripción no está disponible. Configura TRANSCRIPTION_API_KEY y TRANSCRIPTION_MODEL/TRANSCRIPTION_MODELS o un WHISPER_ASR_URL."
     )
 
 
@@ -1815,11 +1877,14 @@ def extract_audio_profile_from_file(source_path: Path, profile_key: str = "audio
     return output_path
 
 
-def _call_openai_transcription(file_path: Path) -> Dict[str, Any]:
+def _call_openai_transcription(
+    file_path: Path, transcription_model: Optional[str] = None
+) -> Dict[str, Any]:
+    model = resolve_transcription_model(transcription_model)
     client = OpenAI(api_key=TRANSCRIPTION_API_KEY, base_url=TRANSCRIPTION_ENDPOINT)
     with file_path.open("rb") as audio_stream:
         response = client.audio.transcriptions.create(
-            model=TRANSCRIPTION_MODEL,
+            model=model,
             file=audio_stream,
             response_format="verbose_json",
         )
@@ -1879,7 +1944,9 @@ def _call_whisper_asr(file_path: Path, media_format: str) -> Dict[str, Any]:
     return _normalize_transcription_payload(payload)
 
 
-def transcribe_audio_file(file_path: Path, media_format: str) -> Dict[str, Any]:
+def transcribe_audio_file(
+    file_path: Path, media_format: str, transcription_model: Optional[str] = None
+) -> Dict[str, Any]:
     ensure_transcription_ready()
     Attempt = Tuple[str, Callable[[], Dict[str, Any]]]
     attempts: List[Attempt] = []
@@ -1895,7 +1962,12 @@ def transcribe_audio_file(file_path: Path, media_format: str) -> Dict[str, Any]:
         attempts.append(("whisper-asr", lambda: _call_whisper_asr(file_path, media_format)))
     else:
         if TRANSCRIPTION_API_KEY and TRANSCRIPTION_MODEL:
-            attempts.append(("openai", lambda: _call_openai_transcription(file_path)))
+            attempts.append(
+                (
+                    "openai",
+                    lambda: _call_openai_transcription(file_path, transcription_model),
+                )
+            )
         if WHISPER_ASR_URL:
             attempts.append(("whisper-asr", lambda: _call_whisper_asr(file_path, media_format)))
 
@@ -1910,23 +1982,32 @@ def transcribe_audio_file(file_path: Path, media_format: str) -> Dict[str, Any]:
     raise DownloadError(f"No se pudo transcribir el audio: {joined or 'error desconocido'}")
 
 
-def generate_transcription_file(url: str, media_format: str) -> Tuple[Path, Dict]:
+def generate_transcription_file(
+    url: str, media_format: str, transcription_model: Optional[str] = None
+) -> Tuple[Path, Dict]:
     if media_format not in TRANSCRIPTION_FORMATS:
         raise DownloadError("Formato de transcripción no soportado")
     diarization = is_diarization_format(media_format)
     translation = is_translation_format(media_format)
     if (diarization or translation) and not WHISPER_ASR_URL:
         raise DownloadError("La diarización y la traducción requieren configurar WHISPER_ASR_URL apuntando a whisper-asr")
+    selected_model = (
+        "whisper-asr" if (diarization or translation) else resolve_transcription_model(transcription_model)
+    )
     diarization_suffix = f"diarization={int(diarization)}"
     translation_suffix = f"translation={int(translation)}"
-    key = cache_key(f"{url}::{diarization_suffix}::{translation_suffix}", media_format)
+    model_suffix = f"model={selected_model}"
+    key = cache_key(
+        f"{url}::{diarization_suffix}::{translation_suffix}::{model_suffix}",
+        media_format,
+    )
     purge_expired_entries()
     cached_path, cached_meta = fetch_cached_file(key)
     if cached_path:
         return cached_path, cached_meta or {}
 
     audio_path, audio_meta = download_media(url, "audio_med")
-    transcript_payload = transcribe_audio_file(audio_path, media_format)
+    transcript_payload = transcribe_audio_file(audio_path, media_format, selected_model)
     if translation:
         transcript_payload = translate_transcription_payload(transcript_payload)
     transcription_stats = estimate_transcription_stats(transcript_payload)
@@ -1965,6 +2046,7 @@ def generate_transcription_file(url: str, media_format: str) -> Tuple[Path, Dict
         "transcription_stats": transcription_stats,
         "diarization": bool(diarization),
         "translation": bool(translation),
+        "transcription_model": selected_model,
     }
     metadata.update(
         {
@@ -1991,6 +2073,8 @@ async def index(request: Request) -> HTMLResponse:
         context=template_context(
             request,
             supported_services=SUPPORTED_SERVICES,
+            transcription_models=TRANSCRIPTION_MODEL_OPTIONS,
+            default_transcription_model=TRANSCRIPTION_MODEL,
         ),
     )
 
@@ -2013,6 +2097,14 @@ async def health() -> Dict[str, str]:
     if VHS_VERSION:
         payload["version"] = VHS_VERSION
     return payload
+
+
+@app.get("/api/transcription/models", response_class=JSONResponse)
+async def transcription_models_endpoint() -> Dict[str, Any]:
+    return {
+        "default_model": TRANSCRIPTION_MODEL,
+        "models": TRANSCRIPTION_MODEL_OPTIONS,
+    }
 
 
 @app.post("/api/probe", response_class=JSONResponse)
@@ -2085,12 +2177,24 @@ async def download_endpoint(
             ),
         )
     normalized_format = normalize_media_format(format_value)
+    transcription_model_raw = payload.get("transcription_model")
+    transcription_model = (
+        str(transcription_model_raw).strip() if transcription_model_raw else None
+    )
+    if normalized_format in TRANSCRIPTION_FORMATS and transcription_model:
+        try:
+            resolve_transcription_model(transcription_model)
+        except DownloadError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     try:
         ensure_storage_ready()
         if normalized_format in TRANSCRIPTION_FORMATS:
             file_path, metadata = await run_in_threadpool(
-                generate_transcription_file, url, normalized_format
+                generate_transcription_file,
+                url,
+                normalized_format,
+                transcription_model,
             )
         elif normalized_format in FFMPEG_PRESETS:
             file_path, metadata = await run_in_threadpool(
@@ -2342,14 +2446,21 @@ async def ffmpeg_upload(
 async def transcribe_upload(
     request: Request,
     media_format: str = Form("transcript_text"),
+    transcription_model: str = Form(""),
     file: UploadFile = File(...),
 ):
     format_value = media_format.lower()
+    requested_model = (transcription_model or "").strip() or None
     if format_value not in TRANSCRIPTION_FORMATS:
         raise HTTPException(
             status_code=400,
             detail="Formato inválido. Usa un formato transcript_* soportado.",
         )
+    if requested_model:
+        try:
+            resolve_transcription_model(requested_model)
+        except DownloadError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not file.filename:
         raise HTTPException(status_code=400, detail="Incluye un archivo de audio o video")
 
@@ -2369,7 +2480,10 @@ async def transcribe_upload(
         )
         try:
             payload = await run_in_threadpool(
-                transcribe_audio_file, audio_path, format_value
+                transcribe_audio_file,
+                audio_path,
+                format_value,
+                requested_model,
             )
             if translation:
                 payload = await run_in_threadpool(

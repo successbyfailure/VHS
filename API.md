@@ -45,6 +45,7 @@ Body JSON:
 ```
 
 - Acepta cualquiera de los formatos listados arriba (video/audio/ffmpeg/transcripción).
+- Para formatos `transcript_*` puedes enviar opcionalmente `transcription_model` para forzar el modelo de STT configurado en `TRANSCRIPTION_MODELS`.
 - Guarda metadatos en caché con resolución (`width`, `height`), bitrates (`video_bitrate_kbps`, `audio_bitrate_kbps`), identificador de formato (`format_id`) y tamaño (`filesize_bytes`).
 - Si la descarga ya existe en caché y no ha expirado, se reutiliza.
 - Para obtener etiquetas de hablante usa `media_format=transcript_diarized_json` o `media_format=transcript_diarized_text` (requiere whisper-asr configurado como `WHISPER_ASR_URL`). Las traducciones `transcript_translate_*` se gestionan vía whisper-asr con destino español.
@@ -59,8 +60,16 @@ Body JSON:
 `POST /api/transcribe/upload`
 
 - `multipart/form-data` con campos `file` y `media_format` (`transcript_json`, `transcript_text`, `transcript_srt`, `transcript_diarized_json`, `transcript_diarized_text`, `transcript_translate_json`, `transcript_translate_text`, `transcript_translate_srt`, `transcript_translate_diarized_json`, `transcript_translate_diarized_text`).
+- Campo opcional `transcription_model` para elegir el modelo STT (solo modelos permitidos por `TRANSCRIPTION_MODELS`).
 - Usa `transcript_diarized_*` para etiquetas de hablante y `transcript_translate_*` para traducir al español mediante whisper-asr.
 - Usa el mismo pipeline de transcripción que el importador remoto y devuelve texto, JSON o SRT según se solicite.
+
+### Modelos de transcripción disponibles
+`GET /api/transcription/models`
+
+- Devuelve el modelo por defecto y la lista de opciones visibles en UI:
+  - `default_model`
+  - `models[]` con `id` y `label`
 
 ### Inspeccionar sin descargar
 `POST /api/probe`

@@ -419,6 +419,10 @@
               </select>
             </div>
           </div>
+          <div id="download-transcription-model-wrap" hidden>
+            <label for="download-transcription-model" data-i18n="label-transcription-model">Modelo de transcripción</label>
+            <select id="download-transcription-model" name="transcription_model"></select>
+          </div>
           <button type="submit" data-i18n="btn-download">Descargar</button>
           <div class="progress" id="progress" hidden>
             <p class="progress-label" id="progress-label">Preparando…</p>
@@ -486,6 +490,10 @@
                   <option value="transcript_translate_diarized_json">Detallado con hablantes (JSON)</option>
                 </optgroup>
               </select>
+            </div>
+            <div>
+              <label for="upload-transcription-model" data-i18n="label-transcription-model">Modelo de transcripción</label>
+              <select name="transcription_model" id="upload-transcription-model"></select>
             </div>
             <button type="submit" data-i18n="btn-transcribe">Transcribir archivo</button>
             <div class="progress" id="upload-progress" hidden>
@@ -642,6 +650,8 @@
     </main>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script>
+      const TRANSCRIPTION_MODEL_OPTIONS = {{ transcription_models | tojson }};
+      const DEFAULT_TRANSCRIPTION_MODEL = {{ default_transcription_model | tojson }};
       const form = document.getElementById('download-form');
       const statusEl = document.getElementById('status');
       const ffmpegForm = document.getElementById('ffmpeg-form');
@@ -680,8 +690,11 @@
       const uploadProgressFill = document.getElementById('upload-progress-fill');
       const uploadFileInput = document.getElementById('upload-file');
       const uploadFormatSelect = document.getElementById('upload-format');
+      const uploadTranscriptionModelSelect = document.getElementById('upload-transcription-model');
       const formatTypeSelect = document.getElementById('format-type');
       const formatProfileSelect = document.getElementById('format-profile');
+      const downloadTranscriptionModelWrap = document.getElementById('download-transcription-model-wrap');
+      const downloadTranscriptionModelSelect = document.getElementById('download-transcription-model');
       let usageChart;
       const tabs = document.querySelectorAll('.tab-button');
 
@@ -700,6 +713,7 @@
           'transcribe-panel-title': 'Transcribe un archivo local',
           'transcribe-panel-hint': 'Sube audio o video corto y obtén transcripción directa.',
           'label-file': 'Archivo', 'label-format': 'Formato', 'btn-transcribe': 'Transcribir archivo',
+          'label-transcription-model': 'Modelo de transcripción',
           'ffmpeg-panel-title': 'Operaciones con ffmpeg',
           'ffmpeg-panel-hint': 'Convierte un archivo local con los presets <code>ffmpeg_*</code>. Ideal para generar masters ligeros sin salir del navegador.',
           'label-ffmpeg-profile': 'Perfil ffmpeg', 'btn-ffmpeg': 'Convertir archivo con ffmpeg',
@@ -757,6 +771,7 @@
           'transcribe-panel-title': 'Transcribe a local file',
           'transcribe-panel-hint': 'Upload a short audio or video and get a direct transcription.',
           'label-file': 'File', 'label-format': 'Format', 'btn-transcribe': 'Transcribe file',
+          'label-transcription-model': 'Transcription model',
           'ffmpeg-panel-title': 'ffmpeg operations',
           'ffmpeg-panel-hint': 'Convert a local file using <code>ffmpeg_*</code> presets. Great for lightweight masters without leaving the browser.',
           'label-ffmpeg-profile': 'ffmpeg preset', 'btn-ffmpeg': 'Convert file with ffmpeg',
@@ -958,6 +973,33 @@
         }
       }
 
+      function rebuildTranscriptionModelSelect(selectEl) {
+        if (!selectEl) return;
+        const savedValue = selectEl.value || DEFAULT_TRANSCRIPTION_MODEL || '';
+        selectEl.innerHTML = '';
+        for (const model of TRANSCRIPTION_MODEL_OPTIONS || []) {
+          const option = document.createElement('option');
+          option.value = model.id;
+          option.textContent = model.label ? `${model.id} - ${model.label}` : model.id;
+          if (model.id === savedValue) {
+            option.selected = true;
+          }
+          selectEl.appendChild(option);
+        }
+        if (!selectEl.value) {
+          const first = selectEl.querySelector('option');
+          if (first) {
+            first.selected = true;
+          }
+        }
+      }
+
+      function updateTranscriptionModelVisibility() {
+        if (!downloadTranscriptionModelWrap) return;
+        const show = (formatTypeSelect?.value || '') === 'transcript';
+        downloadTranscriptionModelWrap.hidden = !show;
+      }
+
       function setLanguage(lang) {
         currentLang = lang;
         localStorage.setItem('vhs-lang', lang);
@@ -965,6 +1007,9 @@
         populateFormatProfiles(formatTypeSelect?.value || 'video');
         rebuildUploadFormat();
         rebuildFfmpegFormat();
+        rebuildTranscriptionModelSelect(uploadTranscriptionModelSelect);
+        rebuildTranscriptionModelSelect(downloadTranscriptionModelSelect);
+        updateTranscriptionModelVisibility();
         if (usageChart) {
           usageChart.data.datasets.forEach((ds, i) => {
             const keys = ['chart-downloads','chart-api','chart-web','chart-other','chart-cache','chart-words','chart-recodings','chart-transcriptions','chart-translations','chart-diarized','chart-errors'];
@@ -979,10 +1024,16 @@
       });
 
       // initialise selects and apply translations on load
-      formatTypeSelect?.addEventListener('change', () => populateFormatProfiles(formatTypeSelect.value));
+      formatTypeSelect?.addEventListener('change', () => {
+        populateFormatProfiles(formatTypeSelect.value);
+        updateTranscriptionModelVisibility();
+      });
       populateFormatProfiles(formatTypeSelect?.value || 'video');
       rebuildUploadFormat();
       rebuildFfmpegFormat();
+      rebuildTranscriptionModelSelect(uploadTranscriptionModelSelect);
+      rebuildTranscriptionModelSelect(downloadTranscriptionModelSelect);
+      updateTranscriptionModelVisibility();
       applyTranslations();
       const panels = document.querySelectorAll('.tab-panel');
 
@@ -1164,6 +1215,12 @@
             format,
             source: 'web',
           };
+          if (detectTranscription && format.startsWith('transcript')) {
+            const selectedModel = downloadTranscriptionModelSelect?.value || '';
+            if (selectedModel) {
+              payload.transcription_model = selectedModel;
+            }
+          }
           try {
             await downloadFromEndpoint(`/api/download`, {
               statusTarget: statusElement,
@@ -1216,6 +1273,10 @@
         const formData = new FormData();
         formData.append('file', uploadFileInput.files[0]);
         formData.append('media_format', uploadFormatSelect?.value || 'transcript_text');
+        const selectedModel = uploadTranscriptionModelSelect?.value || '';
+        if (selectedModel) {
+          formData.append('transcription_model', selectedModel);
+        }
         uploadProgress.reset();
         uploadProgress.start(getProgressSteps().transcription);
         uploadStatusEl.textContent = getProgressSteps().transcription[0] || '…';

@@ -58,7 +58,8 @@ YTDLP_EXTRACTOR_ARGS={"youtube": ["player_client=default"]}
 # OpenAI-compatible endpoint
 TRANSCRIPTION_ENDPOINT=https://api.openai.com/v1
 TRANSCRIPTION_API_KEY=sk-...
-TRANSCRIPTION_MODEL=gpt-4o-mini-transcribe
+TRANSCRIPTION_MODEL=openai/whisper-large-v3-turbo
+TRANSCRIPTION_MODELS=openai/whisper-large-v3-turbo - best, nvidia/parakeet-tdt-0.6b-v3 - fast, nekusu/faster-whisper-large-v3-turbo-latam-int8-ct2 - Español
 
 # Whisper-ASR para diarización y traducción
 WHISPER_ASR_URL=http://localhost:9900
