@@ -446,6 +446,7 @@ TRANSCRIPTION_FORMATS = {
     "transcript_srt",
     "transcript_diarized_json",
     "transcript_diarized_text",
+    "transcript_diarized_srt",
     "transcript_translate_json",
     "transcript_translate_text",
     "transcript_translate_srt",
@@ -514,6 +515,10 @@ FORMAT_DESCRIPTIONS: List[Dict[str, str]] = [
         "description": "Transcripción en texto plano con identificación de hablantes (TXT)",
     },
     {
+        "name": "transcript_diarized_srt",
+        "description": "Subtítulos sincronizados con identificación de hablantes (SRT)",
+    },
+    {
         "name": "transcript_translate_json",
         "description": "Transcripción traducida al español con timestamps (JSON)",
     },
@@ -574,6 +579,7 @@ def is_diarization_format(media_format: str) -> bool:
     return normalized in {
         "transcript_diarized_json",
         "transcript_diarized_text",
+        "transcript_diarized_srt",
         "transcript_translate_diarized_json",
         "transcript_translate_diarized_text",
     }
@@ -611,6 +617,7 @@ FORMAT_EXTENSIONS = {
     "transcript_srt": ".srt",
     "transcript_diarized_json": ".json",
     "transcript_diarized_text": ".txt",
+    "transcript_diarized_srt": ".srt",
     "transcript_translate_json": ".json",
     "transcript_translate_text": ".txt",
     "transcript_translate_srt": ".srt",
@@ -628,7 +635,7 @@ TRANSCRIPTION_FILE_SUFFIX = ".transcript.json"
 
 def media_type_for_format(media_format: str) -> str:
     normalized = normalize_media_format(media_format)
-    if normalized in {"transcript_srt", "transcript_translate_srt"}:
+    if normalized in {"transcript_srt", "transcript_diarized_srt", "transcript_translate_srt"}:
         return "text/srt"
     if normalized in {
         "transcript_json",
@@ -1831,7 +1838,7 @@ def render_transcription_payload(payload: Dict[str, Any], media_format: str) -> 
         "transcript_translate_diarized_json",
     }:
         text = json.dumps(payload, ensure_ascii=False, indent=2)
-    elif normalized in {"transcript_srt", "transcript_translate_srt"}:
+    elif normalized in {"transcript_srt", "transcript_diarized_srt", "transcript_translate_srt"}:
         text = transcription_payload_to_srt(payload)
     else:
         text = _transcription_text_only(payload)
