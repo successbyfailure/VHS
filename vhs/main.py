@@ -628,6 +628,8 @@ TRANSCRIPTION_FILE_SUFFIX = ".transcript.json"
 
 def media_type_for_format(media_format: str) -> str:
     normalized = normalize_media_format(media_format)
+    if normalized in {"transcript_srt", "transcript_translate_srt"}:
+        return "text/srt"
     if normalized in {
         "transcript_json",
         "transcript_diarized_json",
