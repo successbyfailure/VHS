@@ -49,6 +49,7 @@ Body JSON:
 - Para diarización puedes enviar `diarize=true`; en ese caso el modelo se valida contra `DIARIZATION_MODELS`.
 - Guarda metadatos en caché con resolución (`width`, `height`), bitrates (`video_bitrate_kbps`, `audio_bitrate_kbps`), identificador de formato (`format_id`) y tamaño (`filesize_bytes`).
 - Si la descarga ya existe en caché y no ha expirado, se reutiliza.
+- `POST /api/no-cache` acepta el mismo cuerpo y el mismo comportamiento por formato, pero procesa todo en un directorio temporal sin persistir caché global ni metadatos.
 
 ### Recodificar un archivo local con ffmpeg
 `POST /api/ffmpeg/upload`
@@ -59,7 +60,7 @@ Body JSON:
 ### Transcribir un archivo local
 `POST /api/transcribe/upload`
 
-- `multipart/form-data` con campos `file` y `media_format` (`transcript_json`, `transcript_text`, `transcript_srt`, `transcript_diarized_json`, `transcript_diarized_text`, `transcript_translate_json`, `transcript_translate_text`, `transcript_translate_srt`, `transcript_translate_diarized_json`, `transcript_translate_diarized_text`).
+- `multipart/form-data` con campos `file` y `media_format` (`transcript_json`, `transcript_text`, `transcript_srt`, `transcript_diarized_json`, `transcript_diarized_text`, `transcript_diarized_srt`, `transcript_translate_json`, `transcript_translate_text`, `transcript_translate_srt`, `transcript_translate_diarized_json`, `transcript_translate_diarized_text`).
 - Campo opcional `transcription_model` para elegir el modelo STT (solo modelos permitidos por `TRANSCRIPTION_MODELS`).
 - Campo opcional `diarize` (`true`/`false`) para activar diarización; al activarlo se usan modelos de `DIARIZATION_MODELS`.
 - Usa el mismo pipeline de transcripción que el importador remoto y devuelve texto, JSON o SRT según se solicite.

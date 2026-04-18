@@ -141,8 +141,8 @@
   -o video.mp4</code></pre>
         <p>
           Si quieres evitar escritura en la caché y no persistir metadatos, usa
-          <code>POST /api/no-cache</code> con el mismo cuerpo JSON. La descarga se procesa en un directorio temporal
-          y aun así cuenta en las estadísticas de uso.
+          <code>POST /api/no-cache</code> con el mismo cuerpo JSON y el mismo comportamiento por formato.
+          La descarga se procesa en un directorio temporal y aun así cuenta en las estadísticas de uso.
         </p>
       </section>
       <section>
@@ -204,7 +204,7 @@
   -F "media_format=transcript_srt" \
   -F "file=@/ruta/al/audio.mp4" \
   -o subtitulos.srt</code></pre>
-        <p>Los formatos válidos son <code>transcript_json</code>, <code>transcript_text</code>, <code>transcript_srt</code>, <code>transcript_diarized_json</code>, <code>transcript_diarized_text</code>, <code>transcript_translate_json</code>, <code>transcript_translate_text</code>, <code>transcript_translate_srt</code>, <code>transcript_translate_diarized_json</code> y <code>transcript_translate_diarized_text</code>.</p>
+        <p>Los formatos válidos son <code>transcript_json</code>, <code>transcript_text</code>, <code>transcript_srt</code>, <code>transcript_diarized_json</code>, <code>transcript_diarized_text</code>, <code>transcript_diarized_srt</code>, <code>transcript_translate_json</code>, <code>transcript_translate_text</code>, <code>transcript_translate_srt</code>, <code>transcript_translate_diarized_json</code> y <code>transcript_translate_diarized_text</code>.</p>
       </section>
       <section>
         <h2>Gestionar la caché</h2>

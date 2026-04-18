@@ -1589,6 +1589,53 @@ def process_with_ffmpeg(url: str, media_format: str) -> Tuple[Path, Dict]:
     return output_path, metadata
 
 
+def process_with_ffmpeg_no_cache(url: str, media_format: str) -> Tuple[Path, Dict]:
+    """Procesa con ffmpeg en un directorio temporal sin persistir caché ni metadatos."""
+    preset = FFMPEG_PRESETS[media_format]
+    source_path, source_metadata = download_media_no_cache(url, DEFAULT_VIDEO_FORMAT)
+    output_path = source_path.parent / f"output{preset['extension']}"
+    output_path.unlink(missing_ok=True)
+    try:
+        run_ffmpeg(source_path, output_path, preset["args"])
+    finally:
+        cleanup_path(source_path)
+
+    metadata = {
+        "title": source_metadata.get("title") or "video",
+        "filename": output_path.name,
+        "source_url": url,
+        "media_format": media_format,
+        "downloaded_at": time.time(),
+        "_no_cache": True,
+        "preset": media_format,
+        "source_media": {
+            key: value
+            for key, value in source_metadata.items()
+            if key
+            in {
+                "width",
+                "height",
+                "video_bitrate_kbps",
+                "audio_bitrate_kbps",
+                "fps",
+                "format_id",
+                "filesize_bytes",
+            }
+        },
+    }
+    if preset.get("video_height"):
+        metadata["target_height"] = preset["video_height"]
+    if preset.get("video_bitrate_kbps"):
+        metadata["target_video_bitrate_kbps"] = preset["video_bitrate_kbps"]
+    if preset.get("audio_bitrate_kbps"):
+        metadata["target_audio_bitrate_kbps"] = preset["audio_bitrate_kbps"]
+    try:
+        metadata["filesize_bytes"] = output_path.stat().st_size
+    except OSError:
+        pass
+    return output_path, metadata
+
+
 def probe_media(url: str) -> Dict[str, Any]:
     key = cache_key(url, "probe")
     ydl_opts = build_ydl_options(DEFAULT_VIDEO_FORMAT, cache_key_value=key)
@@ -2137,6 +2184,75 @@ def generate_transcription_file(
     return transcript_path, metadata
 
 
+def generate_transcription_file_no_cache(
+    url: str,
+    media_format: str,
+    transcription_model: Optional[str] = None,
+    diarize: bool = False,
+) -> Tuple[Path, Dict]:
+    """Genera transcripciones en un directorio temporal sin persistir caché."""
+    if media_format not in TRANSCRIPTION_FORMATS:
+        raise DownloadError("Formato de transcripción no soportado")
+    translation = is_translation_format(media_format)
+    effective_diarize = diarize or is_diarization_format(media_format)
+    selected_model = (
+        resolve_diarization_model(transcription_model)
+        if effective_diarize
+        else resolve_transcription_model(transcription_model)
+    )
+
+    audio_path, audio_meta = download_media_no_cache(url, "audio_med")
+    try:
+        transcript_payload = transcribe_audio_file(
+            audio_path,
+            media_format,
+            selected_model,
+            diarize=effective_diarize,
+        )
+        if translation:
+            transcript_payload = translate_transcription_payload(transcript_payload)
+    finally:
+        cleanup_path(audio_path)
+
+    transcription_stats = estimate_transcription_stats(transcript_payload)
+    output_extension = FORMAT_EXTENSIONS.get(media_format, ".txt")
+    transcript_path = audio_path.parent / f"transcript{output_extension}"
+    transcript_path.write_text(
+        render_transcription_payload(transcript_payload, media_format),
+        encoding="utf-8",
+    )
+
+    metadata = {
+        "title": audio_meta.get("title") or "transcript",
+        "filename": transcript_path.name,
+        "source_url": url,
+        "media_format": media_format,
+        "downloaded_at": time.time(),
+        "_no_cache": True,
+        "transcription_stats": transcription_stats,
+        "transcription_model": selected_model,
+        "diarization": bool(effective_diarize),
+        "translation": bool(translation),
+    }
+    metadata.update(
+        {
+            key: value
+            for key, value in audio_meta.items()
+            if key
+            in {
+                "audio_bitrate_kbps",
+                "filesize_bytes",
+                "format_id",
+            }
+        }
+    )
+    try:
+        metadata["filesize_bytes"] = transcript_path.stat().st_size
+    except OSError:
+        pass
+    return transcript_path, metadata
+
+
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(
@@ -2334,11 +2450,38 @@ async def no_cache_download_endpoint(
             ),
         )
     normalized_format = normalize_media_format(format_value)
+    requested_diarize = parse_bool_flag(payload.get("diarize"))
+    effective_diarize = requested_diarize or is_diarization_format(normalized_format)
+    transcription_model_raw = payload.get("transcription_model")
+    transcription_model = (
+        str(transcription_model_raw).strip() if transcription_model_raw else None
+    )
+    if normalized_format in TRANSCRIPTION_FORMATS and transcription_model:
+        try:
+            if effective_diarize:
+                resolve_diarization_model(transcription_model)
+            else:
+                resolve_transcription_model(transcription_model)
+        except DownloadError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     try:
-        file_path, metadata = await run_in_threadpool(
-            download_media_no_cache, url, normalized_format
-        )
+        if normalized_format in TRANSCRIPTION_FORMATS:
+            file_path, metadata = await run_in_threadpool(
+                generate_transcription_file_no_cache,
+                url,
+                normalized_format,
+                transcription_model,
+                effective_diarize,
+            )
+        elif normalized_format in FFMPEG_PRESETS:
+            file_path, metadata = await run_in_threadpool(
+                process_with_ffmpeg_no_cache, url, normalized_format
+            )
+        else:
+            file_path, metadata = await run_in_threadpool(
+                download_media_no_cache, url, normalized_format
+            )
     except DownloadError as exc:
         await run_in_threadpool(
             record_error_event, "download_no_cache", detect_request_source(request)
