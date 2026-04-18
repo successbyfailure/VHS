@@ -58,10 +58,10 @@ YTDLP_EXTRACTOR_ARGS={"youtube": ["player_client=default"]}
 # OpenAI-compatible endpoint
 TRANSCRIPTION_ENDPOINT=https://api.openai.com/v1
 TRANSCRIPTION_API_KEY=sk-...
-TRANSCRIPTION_MODEL=openai/whisper-large-v3-turbo
-TRANSCRIPTION_MODELS=openai/whisper-large-v3-turbo - best, nvidia/parakeet-tdt-0.6b-v3 - fast, nekusu/faster-whisper-large-v3-turbo-latam-int8-ct2 - Español
-DIARIZATION_MODEL=openai/whisper-large-v3-turbo::diarize
-DIARIZATION_MODELS=openai/whisper-large-v3-turbo::diarize - best (diarized), nvidia/parakeet-tdt-0.6b-v3::diarize - fast (diarized), nekusu/faster-whisper-large-v3-turbo-latam-int8-ct2::diarize - Español (diarized)
+TRANSCRIPTION_MODEL=whisper-large-v3-turbo
+TRANSCRIPTION_MODELS=whisper-large-v3-turbo - best, parakeet-tdt-0.6b-v3 - fast, faster-whisper-large-v3-turbo-latam-int8-ct2 - Español
+DIARIZATION_MODEL=whisper-large-v3-turbo-diarized
+DIARIZATION_MODELS=whisper-large-v3-turbo-diarized - best (diarized), parakeet-tdt-0.6b-v3-diarized - fast (diarized), faster-whisper-large-v3-turbo-latam-int8-ct2-diarized - Español (diarized)
 
 # Traducción con LLM (opcional para utilidades como el bot de Telegram)
 TRANSLATION_MODEL=gpt-4o-mini

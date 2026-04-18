@@ -98,9 +98,69 @@ _DIARIZATION_MODEL_RAW = os.getenv("DIARIZATION_MODEL", "").strip()
 _DIARIZATION_MODELS_RAW = os.getenv("DIARIZATION_MODELS", "").strip()
 
 
+def _legacy_transcription_aliases(model_id: str) -> List[str]:
+    aliases = [model_id]
+    if "/" in model_id:
+        aliases.append(model_id.split("/", 1)[1].strip())
+        return aliases
+    if model_id.startswith("whisper-"):
+        aliases.append(f"openai/{model_id}")
+    elif model_id.startswith(("parakeet-", "canary-")):
+        aliases.append(f"nvidia/{model_id}")
+    elif model_id.startswith("faster-whisper-"):
+        aliases.extend((f"nekusu/{model_id}", f"Systran/{model_id}"))
+    return aliases
+
+
+def _diarization_aliases(model_id: str) -> List[str]:
+    aliases: List[str] = []
+    if model_id.endswith("::diarize"):
+        base_model = model_id[: -len("::diarize")].strip()
+    elif model_id.endswith("-diarized"):
+        base_model = model_id[: -len("-diarized")].strip()
+    elif model_id.endswith("-diarize"):
+        base_model = model_id[: -len("-diarize")].strip()
+    else:
+        base_model = model_id.strip()
+    if not base_model:
+        return aliases
+    for transcription_alias in _legacy_transcription_aliases(base_model):
+        aliases.extend(
+            (
+                f"{transcription_alias}-diarized",
+                f"{transcription_alias}-diarize",
+                f"{transcription_alias}::diarize",
+            )
+        )
+    deduped: List[str] = []
+    seen: set[str] = set()
+    for alias in aliases:
+        if alias in seen:
+            continue
+        seen.add(alias)
+        deduped.append(alias)
+    return deduped
+
+
+def _resolve_model_alias(requested_model: str, allowed_model_ids: List[str]) -> str:
+    if requested_model in allowed_model_ids:
+        return requested_model
+    for allowed_model_id in allowed_model_ids:
+        aliases = (
+            _diarization_aliases(allowed_model_id)
+            if any(
+                suffix in allowed_model_id for suffix in ("-diarized", "-diarize", "::diarize")
+            )
+            else _legacy_transcription_aliases(allowed_model_id)
+        )
+        if requested_model in aliases:
+            return allowed_model_id
+    return requested_model
+
+
 def _parse_transcription_models(raw_models: str, fallback_model: str) -> List[Dict[str, str]]:
     # Formato soportado: model-id - etiqueta o solo model-id.
-    # Importante: no usar "::" como separador para no romper ids como "...::diarize".
+    # Importante: no usar "::" como separador para no romper ids heredados.
     parsed: List[Dict[str, str]] = []
     if raw_models:
         for item in raw_models.split(","):
@@ -137,11 +197,11 @@ def _derive_diarization_models_from_transcription_options(
         model_id = option["id"].strip()
         if not model_id:
             continue
-        if model_id.endswith("::diarize"):
+        if model_id.endswith(("-diarized", "-diarize", "::diarize")):
             continue
         derived.append(
             {
-                "id": f"{model_id}::diarize",
+                "id": f"{model_id}-diarized",
                 "label": f"{option['label']} (diarized)",
             }
         )
@@ -152,8 +212,11 @@ TRANSCRIPTION_MODEL_OPTIONS = _parse_transcription_models(
     _TRANSCRIPTION_MODELS_RAW, _TRANSCRIPTION_MODEL_RAW
 )
 TRANSCRIPTION_MODEL_IDS = [option["id"] for option in TRANSCRIPTION_MODEL_OPTIONS]
-if _TRANSCRIPTION_MODEL_RAW and _TRANSCRIPTION_MODEL_RAW in TRANSCRIPTION_MODEL_IDS:
-    TRANSCRIPTION_MODEL = _TRANSCRIPTION_MODEL_RAW
+_resolved_transcription_default = _resolve_model_alias(
+    _TRANSCRIPTION_MODEL_RAW, TRANSCRIPTION_MODEL_IDS
+)
+if _TRANSCRIPTION_MODEL_RAW and _resolved_transcription_default in TRANSCRIPTION_MODEL_IDS:
+    TRANSCRIPTION_MODEL = _resolved_transcription_default
 elif TRANSCRIPTION_MODEL_IDS:
     TRANSCRIPTION_MODEL = TRANSCRIPTION_MODEL_IDS[0]
 else:
@@ -172,8 +235,11 @@ DIARIZATION_MODEL_OPTIONS = _parse_transcription_models(
 if not _DIARIZATION_MODELS_RAW and _derived_diarization_options:
     DIARIZATION_MODEL_OPTIONS = _derived_diarization_options
 DIARIZATION_MODEL_IDS = [option["id"] for option in DIARIZATION_MODEL_OPTIONS]
-if _DIARIZATION_MODEL_RAW and _DIARIZATION_MODEL_RAW in DIARIZATION_MODEL_IDS:
-    DIARIZATION_MODEL = _DIARIZATION_MODEL_RAW
+_resolved_diarization_default = _resolve_model_alias(
+    _DIARIZATION_MODEL_RAW, DIARIZATION_MODEL_IDS
+)
+if _DIARIZATION_MODEL_RAW and _resolved_diarization_default in DIARIZATION_MODEL_IDS:
+    DIARIZATION_MODEL = _resolved_diarization_default
 elif DIARIZATION_MODEL_IDS:
     DIARIZATION_MODEL = DIARIZATION_MODEL_IDS[0]
 else:
@@ -183,6 +249,7 @@ else:
 def resolve_transcription_model(requested_model: Optional[str]) -> str:
     selected = (requested_model or "").strip()
     if selected:
+        selected = _resolve_model_alias(selected, TRANSCRIPTION_MODEL_IDS)
         if TRANSCRIPTION_MODEL_IDS and selected not in TRANSCRIPTION_MODEL_IDS:
             raise DownloadError(
                 "Modelo de transcripción no permitido. Revisa TRANSCRIPTION_MODELS."
@@ -198,6 +265,7 @@ def resolve_transcription_model(requested_model: Optional[str]) -> str:
 def resolve_diarization_model(requested_model: Optional[str]) -> str:
     selected = (requested_model or "").strip()
     if selected:
+        selected = _resolve_model_alias(selected, DIARIZATION_MODEL_IDS)
         if DIARIZATION_MODEL_IDS and selected not in DIARIZATION_MODEL_IDS:
             raise DownloadError(
                 "Modelo de diarización no permitido. Revisa DIARIZATION_MODELS."
@@ -1977,7 +2045,9 @@ def transcribe_audio_file(
     try:
         return _call_openai_transcription(file_path, selected_model)
     except Exception as exc:  # pragma: no cover - servicios externos
-        raise DownloadError(f"No se pudo transcribir el audio: {exc}") from exc
+        raise DownloadError(
+            f"No se pudo transcribir el audio con el modelo '{selected_model}': {exc}"
+        ) from exc
 
 
 def generate_transcription_file(
