@@ -38,7 +38,9 @@ from openai import OpenAI
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_AUTH_FILE = Path(os.getenv("TELEGRAM_AUTH_FILE", "data/telegram_auth.json"))
-SUMMARY_MODEL = os.getenv("SUMMARY_MODEL", "gpt-4o-mini")
+# El resumen sale del mismo endpoint que la transcripción, así que por defecto
+# reutiliza el modelo de chat ya configurado para traducir.
+SUMMARY_MODEL = os.getenv("SUMMARY_MODEL") or os.getenv("TRANSLATION_MODEL") or "gpt-4o-mini"
 
 MENU_OPTIONS = ["Descargar", "Transcribir", "Traducir", "Resumir"]
 
@@ -119,7 +121,12 @@ async def summarize_text(text: str) -> str:
     api_key = os.getenv("TRANSCRIPTION_API_KEY")
     if not api_key:
         return "No hay API key configurada para resumir."
-    client = OpenAI(api_key=api_key)
+    # Sin base_url el SDK apunta a api.openai.com y la clave del endpoint
+    # propio se rechaza; hay que reutilizar el mismo endpoint que la STT.
+    client = OpenAI(
+        api_key=api_key,
+        base_url=os.getenv("TRANSCRIPTION_ENDPOINT", "https://api.openai.com/v1"),
+    )
     prompt = (
         "Resume en español el siguiente contenido en 3-4 frases claras:\n\n"
         f"{text[:6000]}"

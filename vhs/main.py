@@ -8,7 +8,10 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -107,6 +110,11 @@ def _legacy_transcription_aliases(model_id: str) -> List[str]:
         aliases.append(f"openai/{model_id}")
     elif model_id.startswith(("parakeet-", "canary-")):
         aliases.append(f"nvidia/{model_id}")
+    elif model_id.startswith("nvidia-"):
+        # El endpoint publica "nvidia-parakeet-...", pero clientes antiguos
+        # siguen pidiendo "parakeet-..." o "nvidia/parakeet-...".
+        bare_model = model_id.split("-", 1)[1]
+        aliases.extend((bare_model, f"nvidia/{bare_model}"))
     elif model_id.startswith("faster-whisper-"):
         aliases.extend((f"nekusu/{model_id}", f"Systran/{model_id}"))
     return aliases
@@ -290,6 +298,48 @@ FFMPEG_HWACCEL_ARGS: List[str] = (
     ["-hwaccel", "cuda", "-hwaccel_output_format", "cuda"] if FFMPEG_ENABLE_NVENC else []
 )
 
+# NVENC no acepta los presets de x264 ("veryfast", "faster"...) ni la opción
+# -crf: usa presets p1..p7 y -cq. Se traducen aquí para que los perfiles se
+# sigan describiendo en términos de x264 y funcionen con ambos encoders.
+#
+# Las escalas no son equivalentes y traducirlas 1:1 sale caro. Medido sobre un
+# tramo de 1080p (SSIM/PSNR contra el original, ficheros del mismo contenido):
+#
+#   libx264 veryfast crf22   26.6 MB   SSIM 0.99196   PSNR 45.47 dB
+#   nvenc p2 cq22            52.2 MB   SSIM 0.99155   PSNR 45.84 dB  <- el doble
+#   nvenc p6 cq32            27.1 MB   SSIM 0.99234   PSNR 46.81 dB  <- mejor
+#
+# Es decir, con "cq = crf" NVENC gastaba el doble de bytes sin ganar calidad.
+# Con el desplazamiento y un preset más lento (que en GPU sigue siendo rápido)
+# iguala en tamaño y mejora la calidad medida.
+_NVENC_PRESET_MAP = {
+    "ultrafast": "p1",
+    "superfast": "p2",
+    "veryfast": "p6",
+    "faster": "p6",
+    "fast": "p6",
+    "medium": "p6",
+    "slow": "p7",
+    "slower": "p7",
+    "veryslow": "p7",
+}
+# Dos puntos de operación razonables, ajustables sin tocar código:
+#   p6 + offset 10 (por defecto): ~1.2x más rápido que libx264 veryfast, mismo
+#     tamaño y algo mejor de calidad medida.
+#   p2 + offset 12: ~2.6x más rápido, mismo tamaño, calidad ligeramente inferior.
+_NVENC_CQ_OFFSET = int(os.getenv("FFMPEG_NVENC_CQ_OFFSET", "10"))
+_NVENC_PRESET_OVERRIDE = os.getenv("FFMPEG_NVENC_PRESET", "").strip()
+
+
+def ffmpeg_video_quality_args(preset: str, quality: str) -> List[str]:
+    """Argumentos de preset y calidad para el encoder de vídeo activo."""
+    if FFMPEG_ENABLE_NVENC:
+        nvenc_preset = _NVENC_PRESET_OVERRIDE or _NVENC_PRESET_MAP.get(preset, "p6")
+        cq = min(51, max(1, int(quality) + _NVENC_CQ_OFFSET))
+        return ["-preset", nvenc_preset, "-cq", str(cq)]
+    return ["-preset", preset, "-crf", quality]
+
+
 AUDIO_FORMAT_PROFILES = {
     "audio_max": {
         "format": "bestaudio/best",
@@ -341,16 +391,13 @@ FFMPEG_PRESETS: Dict[str, Dict[str, Any]] = {
         "description": "Transcodifica a 480p (h.264 CRF 24 máx. ~1.8 Mbps / AAC 128 kbps)",
         "extension": ".mp4",
         "media_type": "video/mp4",
+        "input_args": FFMPEG_HWACCEL_ARGS,
         "args": [
-            *FFMPEG_HWACCEL_ARGS,
             "-vf",
             "scale_cuda=-2:480" if FFMPEG_ENABLE_NVENC else "scale=-2:480",
             "-c:v",
             FFMPEG_VIDEO_ENCODER,
-            "-preset",
-            "veryfast",
-            "-crf",
-            "24",
+            *ffmpeg_video_quality_args("veryfast", "24"),
             "-maxrate",
             "1800k",
             "-bufsize",
@@ -368,16 +415,13 @@ FFMPEG_PRESETS: Dict[str, Dict[str, Any]] = {
         "description": "Transcodifica a 720p (h.264 CRF 23 máx. ~3.2 Mbps / AAC 160 kbps)",
         "extension": ".mp4",
         "media_type": "video/mp4",
+        "input_args": FFMPEG_HWACCEL_ARGS,
         "args": [
-            *FFMPEG_HWACCEL_ARGS,
             "-vf",
             "scale_cuda=-2:720" if FFMPEG_ENABLE_NVENC else "scale=-2:720",
             "-c:v",
             FFMPEG_VIDEO_ENCODER,
-            "-preset",
-            "veryfast",
-            "-crf",
-            "23",
+            *ffmpeg_video_quality_args("veryfast", "23"),
             "-maxrate",
             "3200k",
             "-bufsize",
@@ -395,16 +439,13 @@ FFMPEG_PRESETS: Dict[str, Dict[str, Any]] = {
         "description": "Transcodifica a 1080p (h.264 CRF 22 máx. ~4.8 Mbps / AAC 176 kbps)",
         "extension": ".mp4",
         "media_type": "video/mp4",
+        "input_args": FFMPEG_HWACCEL_ARGS,
         "args": [
-            *FFMPEG_HWACCEL_ARGS,
             "-vf",
             "scale_cuda=-2:1080" if FFMPEG_ENABLE_NVENC else "scale=-2:1080",
             "-c:v",
             FFMPEG_VIDEO_ENCODER,
-            "-preset",
-            "veryfast",
-            "-crf",
-            "22",
+            *ffmpeg_video_quality_args("veryfast", "22"),
             "-maxrate",
             "4800k",
             "-bufsize",
@@ -422,16 +463,13 @@ FFMPEG_PRESETS: Dict[str, Dict[str, Any]] = {
         "description": "Transcodifica a 1440p (h.264 CRF 21 máx. ~8 Mbps / AAC 192 kbps)",
         "extension": ".mp4",
         "media_type": "video/mp4",
+        "input_args": FFMPEG_HWACCEL_ARGS,
         "args": [
-            *FFMPEG_HWACCEL_ARGS,
             "-vf",
             "scale_cuda=-2:1440" if FFMPEG_ENABLE_NVENC else "scale=-2:1440",
             "-c:v",
             FFMPEG_VIDEO_ENCODER,
-            "-preset",
-            "faster",
-            "-crf",
-            "21",
+            *ffmpeg_video_quality_args("faster", "21"),
             "-maxrate",
             "8000k",
             "-bufsize",
@@ -449,16 +487,13 @@ FFMPEG_PRESETS: Dict[str, Dict[str, Any]] = {
         "description": "Transcodifica a 4K (h.264 CRF 20 máx. ~12 Mbps / AAC 256 kbps)",
         "extension": ".mp4",
         "media_type": "video/mp4",
+        "input_args": FFMPEG_HWACCEL_ARGS,
         "args": [
-            *FFMPEG_HWACCEL_ARGS,
             "-vf",
             "scale_cuda=-2:2160" if FFMPEG_ENABLE_NVENC else "scale=-2:2160",
             "-c:v",
             FFMPEG_VIDEO_ENCODER,
-            "-preset",
-            "fast",
-            "-crf",
-            "20",
+            *ffmpeg_video_quality_args("fast", "20"),
             "-maxrate",
             "12000k",
             "-bufsize",
@@ -1185,6 +1220,50 @@ def delete_cache_entry(key: str, metadata: Optional[Dict] = None) -> None:
     legacy_meta_path(key).unlink(missing_ok=True)
 
 
+# Un lock por clave de caché. Sin él, dos peticiones idénticas simultáneas
+# escriben el mismo fichero a la vez: una muere con "Unable to rename file
+# ... .part" y la otra puede llegar a servir una respuesta truncada.
+# El diccionario se limpia por conteo de usuarios para que no crezca sin fin.
+_CACHE_LOCKS: Dict[str, threading.Lock] = {}
+_CACHE_LOCK_USERS: Dict[str, int] = {}
+_CACHE_LOCKS_GUARD = threading.Lock()
+
+
+@contextmanager
+def cache_key_lock(key: str):
+    """Serializa la generación de una misma entrada de caché."""
+    with _CACHE_LOCKS_GUARD:
+        lock = _CACHE_LOCKS.setdefault(key, threading.Lock())
+        _CACHE_LOCK_USERS[key] = _CACHE_LOCK_USERS.get(key, 0) + 1
+    try:
+        with lock:
+            yield
+    finally:
+        with _CACHE_LOCKS_GUARD:
+            remaining = _CACHE_LOCK_USERS.get(key, 1) - 1
+            if remaining > 0:
+                _CACHE_LOCK_USERS[key] = remaining
+            else:
+                _CACHE_LOCK_USERS.pop(key, None)
+                _CACHE_LOCKS.pop(key, None)
+
+
+def write_cache_file_atomic(path: Path, content: str) -> None:
+    """Publica el contenido de golpe con os.replace().
+
+    Escribir en el sitio definitivo deja al fichero a medias mientras dura la
+    escritura, y una petición que lo esté sirviendo devuelve una respuesta
+    truncada. Con el temporal + replace, o se ve la versión vieja o la nueva.
+    """
+    tmp_path = path.with_name(f".{path.name}.tmp")
+    try:
+        tmp_path.write_text(content, encoding="utf-8")
+        os.replace(tmp_path, path)
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
+        raise
+
+
 def fetch_cached_file(key: str) -> Tuple[Optional[Path], Optional[Dict]]:
     metadata = load_meta(key)
     if not metadata:
@@ -1218,15 +1297,21 @@ def purge_expired_entries() -> None:
 def save_meta(key: str, metadata: Dict) -> None:
     sanitized = {k: v for k, v in metadata.items() if not k.startswith("_")}
     sanitized["cache_key"] = key
-    with meta_path(key).open("w", encoding="utf-8") as handle:
-        json.dump(sanitized, handle, ensure_ascii=False, indent=2)
+    # Atómico también aquí: purge_expired_entries() lee estos ficheros sin
+    # protección y un JSON a medias abortaría la petición.
+    write_cache_file_atomic(
+        meta_path(key), json.dumps(sanitized, ensure_ascii=False, indent=2)
+    )
 
 
 def build_ydl_options(
     media_format: str, *, cache_key_value: str, force_no_proxy: bool = False
 ) -> Dict:
+    # yt-dlp necesita un runtime de JavaScript (EJS) para resolver los desafíos
+    # de YouTube. Deno es el único habilitado por defecto, así que se busca
+    # primero; si se fijara solo "node" se estaría desactivando ese defecto.
     js_runtimes: Dict[str, Dict[str, str]] = {}
-    for candidate in ("node", "nodejs"):
+    for candidate in ("deno", "node", "nodejs"):
         path = shutil.which(candidate)
         if path:
             js_runtimes[candidate] = {"executable": path}
@@ -1394,10 +1479,18 @@ def download_media(url: str, media_format: str) -> Tuple[Path, Dict]:
     normalized_format = normalize_media_format(media_format)
     key = cache_key(url, normalized_format)
     purge_expired_entries()
-    cached_path, cached_meta = fetch_cached_file(key)
-    if cached_path:
-        return cached_path, cached_meta or {}
+    # La comprobación de caché va dentro del lock: si otra petición está
+    # generando esta misma entrada, aquí se espera y se reutiliza su resultado.
+    with cache_key_lock(key):
+        cached_path, cached_meta = fetch_cached_file(key)
+        if cached_path:
+            return cached_path, cached_meta or {}
+        return _download_media_uncached(url, normalized_format, key)
 
+
+def _download_media_uncached(
+    url: str, normalized_format: str, key: str
+) -> Tuple[Path, Dict]:
     def extract(force_no_proxy: bool = False) -> Dict:
         ydl_opts = build_ydl_options(
             normalized_format, cache_key_value=key, force_no_proxy=force_no_proxy
@@ -1504,8 +1597,23 @@ def download_media_no_cache(url: str, media_format: str) -> Tuple[Path, Dict]:
     return _run()
 
 
-def run_ffmpeg(source: Path, destination: Path, args: List[str]) -> None:
-    command = [FFMPEG_BINARY, "-y", "-i", str(source), *args, str(destination)]
+def run_ffmpeg(
+    source: Path,
+    destination: Path,
+    args: List[str],
+    input_args: Optional[List[str]] = None,
+) -> None:
+    # Los flags de aceleración por hardware (-hwaccel...) son opciones de entrada
+    # y ffmpeg las rechaza si aparecen después de -i.
+    command = [
+        FFMPEG_BINARY,
+        "-y",
+        *(input_args or []),
+        "-i",
+        str(source),
+        *args,
+        str(destination),
+    ]
     try:
         process = subprocess.run(
             command,
@@ -1539,17 +1647,23 @@ def remux_to_ogg(source_path: Path) -> Path:
 
 
 def process_with_ffmpeg(url: str, media_format: str) -> Tuple[Path, Dict]:
-    preset = FFMPEG_PRESETS[media_format]
     key = cache_key(url, media_format)
     purge_expired_entries()
-    cached_path, cached_meta = fetch_cached_file(key)
-    if cached_path:
-        return cached_path, cached_meta or {}
+    with cache_key_lock(key):
+        cached_path, cached_meta = fetch_cached_file(key)
+        if cached_path:
+            return cached_path, cached_meta or {}
+        return _process_with_ffmpeg_uncached(url, media_format, key)
 
+
+def _process_with_ffmpeg_uncached(
+    url: str, media_format: str, key: str
+) -> Tuple[Path, Dict]:
+    preset = FFMPEG_PRESETS[media_format]
     source_path, source_metadata = download_media(url, DEFAULT_VIDEO_FORMAT)
     output_path = CACHE_DIR / f"{key}{preset['extension']}"
     output_path.unlink(missing_ok=True)
-    run_ffmpeg(source_path, output_path, preset["args"])
+    run_ffmpeg(source_path, output_path, preset["args"], preset.get("input_args"))
 
     metadata = {
         "title": source_metadata.get("title") or "video",
@@ -1596,7 +1710,7 @@ def process_with_ffmpeg_no_cache(url: str, media_format: str) -> Tuple[Path, Dic
     output_path = source_path.parent / f"output{preset['extension']}"
     output_path.unlink(missing_ok=True)
     try:
-        run_ffmpeg(source_path, output_path, preset["args"])
+        run_ffmpeg(source_path, output_path, preset["args"], preset.get("input_args"))
     finally:
         cleanup_path(source_path)
 
@@ -1795,6 +1909,87 @@ def _normalize_transcription_payload(payload: Any) -> Dict[str, Any]:
     return data
 
 
+# Los LLM pequeños tienden a colar énfasis Markdown o una coletilla explicativa
+# aunque el prompt lo prohíba. Los subtítulos son texto plano, así que se limpia
+# la salida de forma determinista en vez de confiar solo en el prompt.
+# Solo se limpia el énfasis con asteriscos, que es el que emiten estos modelos.
+# El guion bajo se deja intacto a propósito: "config_final_v2" o "__init__" son
+# texto legítimo y no merece la pena arriesgarse a mutilarlos.
+_MD_EMPHASIS_RE = re.compile(
+    r"(?<![\w*])(\*{1,3})(?=\S)(.+?)(?<=\S)\1(?![\w*])", re.DOTALL
+)
+_TRAILING_NOTE_RE = re.compile(
+    r"\n\s*\n\s*\(?\s*(?:Nota|Note|N\.B\.)\s*:.*\Z",
+    re.DOTALL | re.IGNORECASE,
+)
+
+
+def _sanitize_translation(text: str) -> str:
+    cleaned = _TRAILING_NOTE_RE.sub("", text)
+    cleaned = _MD_EMPHASIS_RE.sub(r"\2", cleaned)
+    return cleaned.strip()
+
+
+# Formato de las líneas que se piden y se esperan en una traducción por lotes.
+_BATCH_LINE_RE = re.compile(r"^\s*(\d+)\s*[.)\-:]\s*(.*)$")
+_WHITESPACE_RE = re.compile(r"\s+")
+
+
+def _chat_translate(client: OpenAI, model: str, system: str, user: str) -> str:
+    completion = client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        temperature=0,
+    )
+    return completion.choices[0].message.content or ""
+
+
+def _translate_one(client: OpenAI, model: str, text: str) -> str:
+    user_content = TRANSLATION_USER_PROMPT_TEMPLATE.format(text=str(text))
+    translated = _sanitize_translation(
+        _chat_translate(client, model, TRANSLATION_SYSTEM_PROMPT, user_content)
+    )
+    if not translated:
+        raise DownloadError("La traducción devolvió un texto vacío")
+    return translated
+
+
+def _translate_batch(
+    client: OpenAI, model: str, batch: List[str]
+) -> Optional[List[str]]:
+    """Traduce varios segmentos en una sola petición.
+
+    Devuelve None si la respuesta no respeta la numeración pedida, para que el
+    llamante reintente ese lote segmento a segmento. Un lote mal alineado
+    desplazaría los subtítulos, así que ante la duda no se acepta.
+    """
+    numbered = "\n".join(
+        f"{index}. {_WHITESPACE_RE.sub(' ', str(text)).strip()}"
+        for index, text in enumerate(batch, 1)
+    )
+    system = (
+        f"{TRANSLATION_SYSTEM_PROMPT}\n"
+        f"Recibirás {len(batch)} líneas numeradas. Devuelve exactamente "
+        f"{len(batch)} líneas, con la misma numeración y en el mismo orden, "
+        "traduciendo cada una por separado. No fusiones ni dividas líneas, "
+        "y no añadas ninguna línea extra."
+    )
+    raw = _chat_translate(client, model, system, numbered)
+
+    parsed: Dict[int, str] = {}
+    for line in raw.splitlines():
+        match = _BATCH_LINE_RE.match(line)
+        if match:
+            parsed[int(match.group(1))] = _sanitize_translation(match.group(2))
+    expected = range(1, len(batch) + 1)
+    if len(parsed) != len(batch) or not all(parsed.get(i) for i in expected):
+        return None
+    return [parsed[i] for i in expected]
+
+
 def _translate_texts_to_spanish(texts: List[str]) -> List[str]:
     if not TRANSCRIPTION_API_KEY:
         raise DownloadError("La traducción requiere configurar TRANSCRIPTION_API_KEY")
@@ -1803,22 +1998,35 @@ def _translate_texts_to_spanish(texts: List[str]) -> List[str]:
         raise DownloadError(
             "Configura TRANSLATION_MODEL con un modelo de chat válido para traducir al español"
         )
+    if not texts:
+        return []
+
     client = OpenAI(api_key=TRANSCRIPTION_API_KEY, base_url=TRANSCRIPTION_ENDPOINT)
-    results: List[str] = []
-    for text in texts:
-        user_content = TRANSLATION_USER_PROMPT_TEMPLATE.format(text=str(text))
-        completion = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": TRANSLATION_SYSTEM_PROMPT},
-                {"role": "user", "content": user_content},
-            ],
-            temperature=0,
+    size = max(1, TRANSLATION_BATCH_SIZE)
+    batches = [texts[i : i + size] for i in range(0, len(texts), size)]
+
+    def translate_group(batch: List[str]) -> List[str]:
+        if len(batch) > 1:
+            grouped = _translate_batch(client, model, batch)
+            if grouped is not None:
+                return grouped
+        return [_translate_one(client, model, text) for text in batch]
+
+    workers = min(max(1, TRANSLATION_CONCURRENCY), len(batches))
+    if workers > 1:
+        # Los backends vLLM del endpoint agrupan peticiones concurrentes, así
+        # que varios lotes a la vez salen casi gratis. Con ollama se serializan
+        # igualmente y basta con dejar TRANSLATION_CONCURRENCY=1.
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            grouped_results = list(pool.map(translate_group, batches))
+    else:
+        grouped_results = [translate_group(batch) for batch in batches]
+
+    results = [text for group in grouped_results for text in group]
+    if len(results) != len(texts):
+        raise DownloadError(
+            "La traducción devolvió un número de segmentos distinto al original"
         )
-        translated = (completion.choices[0].message.content or "").strip()
-        if not translated:
-            raise DownloadError("La traducción devolvió un texto vacío")
-        results.append(translated)
     return results
 
 
@@ -2006,7 +2214,7 @@ def convert_uploaded_file_with_ffmpeg(source_path: Path, media_format: str) -> P
     with tempfile.NamedTemporaryFile(delete=False, suffix=preset["extension"]) as tmp:
         output_path = Path(tmp.name)
     try:
-        run_ffmpeg(source_path, output_path, preset["args"])
+        run_ffmpeg(source_path, output_path, preset["args"], preset.get("input_args"))
     except Exception:
         output_path.unlink(missing_ok=True)
         raise
@@ -2120,10 +2328,23 @@ def generate_transcription_file(
         media_format,
     )
     purge_expired_entries()
-    cached_path, cached_meta = fetch_cached_file(key)
-    if cached_path:
-        return cached_path, cached_meta or {}
+    with cache_key_lock(key):
+        cached_path, cached_meta = fetch_cached_file(key)
+        if cached_path:
+            return cached_path, cached_meta or {}
+        return _generate_transcription_file_uncached(
+            url, media_format, key, selected_model, effective_diarize, translation
+        )
 
+
+def _generate_transcription_file_uncached(
+    url: str,
+    media_format: str,
+    key: str,
+    selected_model: str,
+    effective_diarize: bool,
+    translation: bool,
+) -> Tuple[Path, Dict]:
     audio_path, audio_meta = download_media(url, "audio_med")
     transcript_payload = transcribe_audio_file(
         audio_path,
@@ -2140,20 +2361,20 @@ def generate_transcription_file(
             transcript_path = CACHE_DIR / f"{key}{TRANSCRIPTION_FILE_SUFFIX}"
         else:
             transcript_path = CACHE_DIR / f"{key}.json"
-        transcript_path.write_text(
+        write_cache_file_atomic(
+            transcript_path,
             json.dumps(transcript_payload, ensure_ascii=False, indent=2),
-            encoding="utf-8",
         )
     elif media_format.endswith("_srt") or media_format == "transcript_srt":
         transcript_path = CACHE_DIR / f"{key}.srt"
         srt_content = transcription_payload_to_srt(transcript_payload)
-        transcript_path.write_text(srt_content, encoding="utf-8")
+        write_cache_file_atomic(transcript_path, srt_content)
     else:
         text_only = transcript_payload.get("text") or ""
         if not isinstance(text_only, str):
             text_only = str(text_only)
         transcript_path = CACHE_DIR / f"{key}.txt"
-        transcript_path.write_text(text_only.strip(), encoding="utf-8")
+        write_cache_file_atomic(transcript_path, text_only.strip())
 
     metadata = {
         "title": audio_meta.get("title") or "transcript",
@@ -2217,9 +2438,9 @@ def generate_transcription_file_no_cache(
     transcription_stats = estimate_transcription_stats(transcript_payload)
     output_extension = FORMAT_EXTENSIONS.get(media_format, ".txt")
     transcript_path = audio_path.parent / f"transcript{output_extension}"
-    transcript_path.write_text(
-        render_transcription_payload(transcript_payload, media_format),
-        encoding="utf-8",
+    # render_transcription_payload() ya devuelve UTF-8 codificado.
+    transcript_path.write_bytes(
+        render_transcription_payload(transcript_payload, media_format)
     )
 
     metadata = {
@@ -2750,11 +2971,16 @@ async def transcribe_upload(
     )
     return response
 TRANSLATION_MODEL = os.getenv("TRANSLATION_MODEL")
+# Segmentos por petición y lotes simultáneos. La traducción hacía una llamada
+# por segmento (152 en un vídeo de 8 minutos), que era el cuello de botella.
+TRANSLATION_BATCH_SIZE = max(1, int(os.getenv("TRANSLATION_BATCH_SIZE", "8")))
+TRANSLATION_CONCURRENCY = max(1, int(os.getenv("TRANSLATION_CONCURRENCY", "4")))
 TRANSLATION_SYSTEM_PROMPT = os.getenv(
     "TRANSLATION_SYSTEM_PROMPT",
     "Eres un traductor profesional. Tu única tarea es traducir el texto al español de forma directa y precisa. "
     "NO resumas, NO razones, NO expliques, NO añadas comentarios. "
     "Mantén el significado exacto, el tono y la estructura del texto original. "
+    "No uses Markdown ni ningún otro formato: el resultado va a subtítulos en texto plano. "
     "Devuelve ÚNICAMENTE el texto traducido, nada más."
 )
 TRANSLATION_USER_PROMPT_TEMPLATE = os.getenv(

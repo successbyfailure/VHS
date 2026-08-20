@@ -1,6 +1,6 @@
 # VHS · Video Harvester Service
 
-**Versión**: 0.2.24
+**Versión**: 0.3.1
 
 Servicio FastAPI que descarga, convierte y transcribe vídeos o audios mediante `yt-dlp` y perfiles rápidos de `ffmpeg`. Este directorio está listo para vivir como repositorio independiente y generar su propia imagen de Docker.
 
@@ -8,6 +8,8 @@ Servicio FastAPI que descarga, convierte y transcribe vídeos o audios mediante 
 
 - Python 3.11+
 - `ffmpeg` disponible en el sistema
+- Un runtime de JavaScript para yt-dlp (`deno`, recomendado, o `node` 20+).
+  Sin él YouTube devuelve `HTTP 403` en las descargas.
 
 ## Variables de entorno
 
@@ -24,7 +26,7 @@ Para evitar bloqueos de YouTube es posible ajustar:
 - `YTDLP_USER_AGENT`: agente de usuario enviado a YouTube.
 - `YTDLP_BOT_PROTECTION_RETRIES`: número de intentos con agentes nuevos ante un desafío de inicio de sesión (por defecto, 3).
 - `YTDLP_BOT_PROTECTION_DELAY`: segundos de espera entre intentos (por defecto, 6).
-- `YTDLP_EXTRACTOR_ARGS`: argumentos adicionales para yt-dlp en formato JSON. Por defecto se usa `{ "youtube": ["player_client=default"] }` y se habilita el componente remoto `ejs:github` con Node.js para resolver desafíos JS.
+- `YTDLP_EXTRACTOR_ARGS`: argumentos adicionales para yt-dlp en formato JSON. Por defecto se usa `{ "youtube": ["player_client=default"] }` y se habilita el componente remoto `ejs:github`. El runtime JS se autodetecta por orden de preferencia (`deno`, `node`, `nodejs`); las imágenes Docker traen Deno incluido.
 
 ## Ejecución local
 

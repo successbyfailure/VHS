@@ -1,9 +1,17 @@
-fastapi
-uvicorn[standard]
-yt-dlp
-jinja2
-python-multipart
-certifi
-openai
-python-dotenv
-python-telegram-bot
+# Versiones verificadas el 2026-08-20 contra el endpoint de IA y YouTube.
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+jinja2==3.1.6
+python-multipart==0.0.32
+openai==3.3.1
+python-dotenv==1.2.3
+python-telegram-bot==22.8
+
+# Sin fijar a propósito: YouTube rompe la extracción con frecuencia y la imagen
+# se reconstruye por cron (ver .github/workflows/docker-image.yml) para recoger
+# la última versión. Fijarla es la causa del error 403 "unable to download video
+# data" cuando la imagen se queda meses sin reconstruir.
+yt-dlp>=2026.8.19
+
+# Paquete de CA: conviene que siempre recoja el bundle más reciente.
+certifi>=2026.7.22

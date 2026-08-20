@@ -59,12 +59,16 @@ YTDLP_EXTRACTOR_ARGS={"youtube": ["player_client=default"]}
 TRANSCRIPTION_ENDPOINT=https://api.openai.com/v1
 TRANSCRIPTION_API_KEY=sk-...
 TRANSCRIPTION_MODEL=whisper-large-v3-turbo
-TRANSCRIPTION_MODELS=whisper-large-v3-turbo - best, parakeet-tdt-0.6b-v3 - fast, faster-whisper-large-v3-turbo-latam-int8-ct2 - Español
+TRANSCRIPTION_MODELS=whisper-large-v3-turbo - best, faster-whisper-large-v3-turbo-latam-int8-ct2 - Español (rápido), nvidia-parakeet-tdt-0.6b-v3 - solo texto (sin marcas de tiempo), faster-whisper-base - ligero (menor precisión)
 DIARIZATION_MODEL=whisper-large-v3-turbo-diarized
-DIARIZATION_MODELS=whisper-large-v3-turbo-diarized - best (diarized), parakeet-tdt-0.6b-v3-diarized - fast (diarized), faster-whisper-large-v3-turbo-latam-int8-ct2-diarized - Español (diarized)
+DIARIZATION_MODELS=whisper-large-v3-turbo-diarized - best (diarized), faster-whisper-large-v3-turbo-latam-int8-ct2-diarized - Español (diarized), faster-whisper-base-diarized - ligero (diarized)
 
 # Traducción con LLM (opcional para utilidades como el bot de Telegram)
-TRANSLATION_MODEL=gpt-4o-mini
+TRANSLATION_MODEL=gemma4:12b-vllm-ctx64k
+SUMMARY_MODEL=gemma4:12b-vllm-ctx64k
+# Segmentos por petición y lotes en paralelo (vLLM agrupa; ollama serializa)
+TRANSLATION_BATCH_SIZE=8
+TRANSLATION_CONCURRENCY=8
 # TRANSLATION_SYSTEM_PROMPT=... (opcional)
 # TRANSLATION_USER_PROMPT_TEMPLATE=... (opcional)
 ```
@@ -172,6 +176,9 @@ curl -X POST http://localhost:8601/api/download \
 **Modelo no permitido**: Revisar `TRANSCRIPTION_MODELS` o `DIARIZATION_MODELS` según el caso
 **Traducción del bot falla**: Verificar que `TRANSLATION_MODEL` sea compatible con chat
 **YouTube bloquea descargas**: Ajustar `YTDLP_USER_AGENT` y `YTDLP_EXTRACTOR_ARGS`
+**El servicio se queda obsoleto**: `watchtower` ya viene activo en ambos ficheros compose (cada 5 min, solo contenedores con la etiqueta `watchtower.scope=vhs`). Comprueba que está vivo con `docker logs vhs-watchtower`. Ojo: watchtower despliega lo que haya en GHCR, así que una imagen construida en local y no publicada será reemplazada por la del registro
+**Dos peticiones idénticas a la vez**: desde 0.3.1 se serializan con un lock por clave de caché; la primera genera el fichero y el resto reutilizan su resultado. Si vuelves a ver `Unable to rename file ... .part`, el lock no se está aplicando a esa ruta
+**`HTTP Error 403: Forbidden` al descargar** (el `probe` sí funciona): yt-dlp está desactualizado o falta el runtime JS. Actualiza la imagen y comprueba con `docker exec vhs deno --version`
 
 ### Logs
 
@@ -217,3 +224,48 @@ curl http://localhost:8601/api/stats/usage
 ## 📄 Licencia
 
 Ver archivo LICENSE en el repositorio.
+
+## 🎛️ Rendimiento
+
+### Traducción
+
+La traducción hacía **una llamada de chat por segmento** (152 en un vídeo de 8
+minutos). Ahora los segmentos se agrupan (`TRANSLATION_BATCH_SIZE`) y los lotes
+se lanzan en paralelo (`TRANSLATION_CONCURRENCY`). Si el modelo no respeta la
+numeración pedida, ese lote se reintenta segmento a segmento: es preferible ir
+lento a desplazar los subtítulos.
+
+El backend del modelo manda. Medido sobre el endpoint, lotes de 8 segmentos:
+
+| modelo | backend | 1 hilo | 8 hilos |
+|---|---|---|---|
+| `ministral-3:14b` | ollama | 1.7 seg/s | 1.9 seg/s |
+| `gemma4:12b-vllm-ctx64k` | vLLM | 3.0 seg/s | **19.5 seg/s** |
+
+ollama serializa las peticiones, así que subir la concurrencia no aporta nada;
+vLLM las agrupa y escala casi lineal. Con un modelo `*-vllm-*` la traducción de
+un vídeo de 8 minutos baja de 2m46s a ~20s (50s contando descarga y STT).
+
+### Vídeo: NVENC frente a libx264
+
+Medido sobre una fuente 1080p AV1 de 8:29 (SSIM/PSNR sobre un tramo de 90 s):
+
+| encoder | tiempo | tamaño | SSIM | PSNR |
+|---|---|---|---|---|
+| `libx264 veryfast crf22` (CPU) | 129 s | 184.0 MB | 0.99196 | 45.47 dB |
+| `nvenc p2 cq22` (el antiguo `cq = crf`) | 47 s | 302.5 MB | 0.99155 | 45.84 dB |
+| `nvenc p2 cq34` | 50 s | 186.5 MB | 0.98984 | 45.05 dB |
+| `nvenc p6 cq32` (actual) | 106 s | ~186 MB | **0.99234** | **46.81 dB** |
+
+Con `cq = crf` NVENC gastaba el doble de bytes sin ganar calidad: la escala de
+`-cq` no equivale a la de `-crf`. Con el desplazamiento (`FFMPEG_NVENC_CQ_OFFSET`,
+10 por defecto) el tamaño se iguala. A partir de ahí hay dos puntos de operación:
+
+- **`p6` + offset 10** (por defecto): ~1.2× más rápido que libx264 y algo mejor
+  de calidad medida.
+- **`p2` + offset 12** (`FFMPEG_NVENC_PRESET=p2`): ~2.6× más rápido, mismo
+  tamaño, calidad ligeramente inferior.
+
+Además NVENC usa el bloque de codificación dedicado de la GPU, no los núcleos
+CUDA, así que apenas compite con los modelos de IA que corren en la misma
+máquina y deja la CPU libre.

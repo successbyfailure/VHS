@@ -1,27 +1,39 @@
-FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04
+FROM nvidia/cuda:13.0.3-runtime-ubuntu24.04
 
+# Ubuntu 24.04 marca el Python del sistema como "externally managed" (PEP 668),
+# así que las dependencias van en un virtualenv propio.
+# DENO_DIR apunta a /tmp porque el contenedor corre como UID 1000.
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     NVIDIA_VISIBLE_DEVICES=all \
     NVIDIA_DRIVER_CAPABILITIES=compute,video,utility \
-    FFMPEG_ENABLE_NVENC=1
+    FFMPEG_ENABLE_NVENC=1 \
+    DENO_INSTALL=/usr/local \
+    DENO_DIR=/tmp/deno \
+    VIRTUAL_ENV=/opt/venv \
+    PATH=/opt/venv/bin:$PATH
 
 WORKDIR /app
 
+# Deno es el runtime de JavaScript que yt-dlp usa para resolver los desafíos
+# de YouTube (EJS). Sustituye al paquete nodejs de Ubuntu, demasiado antiguo
+# para esta tarea.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
         ffmpeg \
-        nodejs \
-        python3 \
-        python3-pip \
-        python3-venv \
         curl \
+        unzip \
+        python3 \
+        python3-venv \
     && update-ca-certificates \
+    && python3 -m venv "$VIRTUAL_ENV" \
+    && curl -fsSL https://deno.land/install.sh | sh -s -- -y --no-modify-path \
+    && deno --version \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt ./
-RUN python3 -m pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
