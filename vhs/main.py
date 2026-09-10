@@ -51,7 +51,9 @@ load_dotenv()
 
 import yt_dlp
 from openai import OpenAI
+
 from versioning import get_version
+from vhs import upscale as upscale_mod
 
 APP_TITLE = "VHS · Video Harvester Service"
 VHS_VERSION = get_version("vhs")
@@ -733,6 +735,17 @@ for preset_name, preset in FFMPEG_PRESETS.items():
 FORMAT_EXTENSIONS["video_high"] = FORMAT_EXTENSIONS["video_max"]
 FORMAT_EXTENSIONS["audio_high"] = FORMAT_EXTENSIONS["audio_max"]
 
+# Formatos de escalado. Se declaran por **resolución objetivo** y no por
+# factor: el 4x del modelo es un detalle de implementación que no debe salir a
+# la interfaz, y algunos modelos admiten factores arbitrarios.
+UPSCALE_FORMATS = {
+    "upscale_1080": 1080,
+    "upscale_1440": 1440,
+    "upscale_2160": 2160,
+}
+for _name in UPSCALE_FORMATS:
+    FORMAT_EXTENSIONS[_name] = ".mp4"
+
 TRANSCRIPTION_FILE_SUFFIX = ".transcript.json"
 
 
@@ -749,6 +762,8 @@ def media_type_for_format(media_format: str) -> str:
         return "application/json"
     if normalized in TRANSCRIPTION_FORMATS - {"transcript_json"}:
         return "text/plain"
+    if normalized in UPSCALE_FORMATS:
+        return "video/mp4"
     if normalized in FFMPEG_PRESETS:
         return FFMPEG_PRESETS[normalized]["media_type"]
     if normalized in AUDIO_FORMAT_PROFILES:
@@ -2877,6 +2892,109 @@ async def ffmpeg_upload(
         media_type=media_type_for_format(format_value),
         filename=download_name,
         background=background_tasks,
+    )
+    await run_in_threadpool(
+        record_download_event,
+        format_value,
+        False,
+        None,
+        detect_request_source(request),
+    )
+    return response
+
+
+@app.get("/api/upscale/models", response_class=JSONResponse)
+async def upscale_models():
+    """Modelos de escalado disponibles, con el aviso de tiempo para la UI.
+
+    El aviso se calcula a partir del rendimiento medido que se declara en
+    UPSCALE_MODELS, no está escrito a mano: así no miente si cambia el
+    hardware o el modelo.
+    """
+    models = upscale_mod.models_for_ui()
+    return {
+        "models": models,
+        "default_model": models[0]["id"] if models else "",
+        "targets": sorted(UPSCALE_FORMATS.keys()),
+        "segment_seconds": upscale_mod.segment_seconds(),
+    }
+
+
+@app.post("/api/upscale/upload")
+async def upscale_upload(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    media_format: str = Form("upscale_1080"),
+    upscale_model: str = Form(""),
+    file: UploadFile = File(...),
+):
+    """Sube un vídeo y devuélvelo escalado.
+
+    Es síncrono como el resto de VHS. Con el nivel rápido va a ~1x el tiempo
+    real, así que encaja; con un modelo de difusión (~9x) esto se queda corto
+    y hará falta una cola de trabajos.
+    """
+    format_value = normalize_media_format(media_format)
+    if format_value not in UPSCALE_FORMATS:
+        raise HTTPException(
+            status_code=400,
+            detail="Formato inválido. Usa uno de: " + ", ".join(sorted(UPSCALE_FORMATS)) + ".",
+        )
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Incluye un archivo de vídeo")
+
+    available = upscale_mod.parse_models()
+    if not available:
+        raise HTTPException(
+            status_code=503,
+            detail="El escalado no está configurado. Define UPSCALE_MODELS.",
+        )
+    allowed = {m["id"] for m in available}
+    selected = (upscale_model or "").strip() or available[0]["id"]
+    if selected not in allowed:
+        raise HTTPException(
+            status_code=400,
+            detail="Modelo de escalado no permitido. Revisa UPSCALE_MODELS.",
+        )
+
+    temp_path: Optional[Path] = None
+    output_path: Optional[Path] = None
+    try:
+        ensure_storage_ready()
+        temp_path = await save_upload_file(file)
+        output_path, metadata = await run_in_threadpool(
+            upscale_mod.upscale_file,
+            temp_path,
+            model=selected,
+            target_height=UPSCALE_FORMATS[format_value],
+            ffmpeg=FFMPEG_BINARY,
+            nvenc=FFMPEG_ENABLE_NVENC,
+        )
+    except upscale_mod.UpscaleError as exc:
+        await run_in_threadpool(
+            record_error_event, "upscale_upload", detect_request_source(request)
+        )
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    finally:
+        if temp_path:
+            cleanup_path(temp_path)
+
+    download_name = build_download_name(
+        file.filename or "upscaled", output_path, format_value
+    )
+    # El directorio de trabajo lleva dentro los segmentos intermedios, así que
+    # se borra el árbol entero, no solo el fichero de salida.
+    background_tasks.add_task(upscale_mod.cleanup_workdir, output_path.parent)
+    response = FileResponse(
+        path=output_path,
+        media_type="video/mp4",
+        filename=download_name,
+        background=background_tasks,
+        headers={
+            "x-vhs-upscale-model": metadata["upscale_model"],
+            "x-vhs-source-resolution": metadata["source_resolution"],
+            "x-vhs-segments": str(metadata["segments"]),
+        },
     )
     await run_in_threadpool(
         record_download_event,

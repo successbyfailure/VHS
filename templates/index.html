@@ -394,6 +394,7 @@
         <button class="tab-button active" data-tab="download-tab" data-i18n="tab-download">Descargar</button>
         <button class="tab-button" data-tab="transcribe-tab" data-i18n="tab-transcribe">Transcribir</button>
         <button class="tab-button" data-tab="ffmpeg-tab">FFMPEG</button>
+        <button class="tab-button" data-tab="upscale-tab" data-i18n="tab-upscale">Mejorar resolución</button>
         <button class="tab-button" data-tab="stats-tab" data-i18n="tab-stats">Estadísticas</button>
       </div>
 
@@ -604,6 +605,47 @@
             <p class="status" id="ffmpeg-status"></p>
           </form>
           <p class="panel-status" id="ffmpeg-stats"></p>
+        </section>
+      </section>
+
+      <section class="tab-panel hidden" id="upscale-tab">
+        <section class="panel">
+          <div class="panel-header">
+            <div>
+              <h2 data-i18n="upscale-panel-title">Mejorar la resolución de un vídeo</h2>
+              <p class="hint" data-i18n="upscale-panel-hint">
+                Sube un vídeo y elige a qué resolución quieres llevarlo. El proceso usa la GPU y no es instantáneo:
+                cada opción indica cuánto puede tardar.
+              </p>
+            </div>
+          </div>
+          <form id="upscale-form" class="upload-form">
+            <div>
+              <label for="upscale-file" data-i18n="label-file">Archivo</label>
+              <input type="file" id="upscale-file" name="file" accept="video/*" required />
+            </div>
+            <div>
+              <label for="upscale-target" data-i18n="label-upscale-target">Resolución objetivo</label>
+              <select name="media_format" id="upscale-target">
+                <option value="upscale_1080">1080p (Full HD)</option>
+                <option value="upscale_1440">1440p (2K)</option>
+                <option value="upscale_2160">2160p (4K)</option>
+              </select>
+            </div>
+            <div>
+              <label for="upscale-model" data-i18n="label-upscale-model">Calidad</label>
+              <select name="upscale_model" id="upscale-model"></select>
+              <p class="hint" id="upscale-estimate"></p>
+            </div>
+            <button type="submit" data-i18n="btn-upscale">Mejorar resolución</button>
+            <div class="progress" id="upscale-progress" hidden>
+              <p class="progress-label" id="upscale-progress-label">Preparando…</p>
+              <div class="progress-bar">
+                <div class="progress-fill" id="upscale-progress-fill"></div>
+              </div>
+            </div>
+            <p class="status" id="upscale-status"></p>
+          </form>
         </section>
       </section>
 
@@ -1388,6 +1430,75 @@
       setupDownloadHandler(transcribeUrlForm, transcribeUrlStatusEl, transcribeUrlProgress, {
         detectTranscription: true,
         transcriptionModelSelect: transcribeUrlModelSelect,
+      });
+
+      const upscaleForm = document.getElementById('upscale-form');
+      const upscaleFileInput = document.getElementById('upscale-file');
+      const upscaleTargetSelect = document.getElementById('upscale-target');
+      const upscaleModelSelect = document.getElementById('upscale-model');
+      const upscaleEstimateEl = document.getElementById('upscale-estimate');
+      const upscaleStatusEl = document.getElementById('upscale-status');
+      const upscaleProgress = createProgressTracker(
+        document.getElementById('upscale-progress'),
+        document.getElementById('upscale-progress-label'),
+        document.getElementById('upscale-progress-fill'),
+      );
+      let upscaleModels = [];
+
+      function renderUpscaleEstimate() {
+        const selected = upscaleModels.find((m) => m.id === upscaleModelSelect?.value);
+        // El aviso lo calcula el backend a partir del rendimiento medido:
+        // aquí solo se muestra, para que no haya dos fuentes de verdad.
+        upscaleEstimateEl.textContent = selected?.estimate || '';
+      }
+
+      async function loadUpscaleModels() {
+        try {
+          const response = await fetch('/api/upscale/models');
+          if (!response.ok) return;
+          const data = await response.json();
+          upscaleModels = data.models || [];
+          upscaleModelSelect.innerHTML = '';
+          upscaleModels.forEach((model) => {
+            const option = document.createElement('option');
+            option.value = model.id;
+            option.textContent = model.estimate
+              ? `${model.label} — ${model.estimate}`
+              : model.label;
+            upscaleModelSelect.appendChild(option);
+          });
+          if (data.default_model) upscaleModelSelect.value = data.default_model;
+          renderUpscaleEstimate();
+        } catch (error) {
+          console.error(error);
+        }
+      }
+
+      upscaleModelSelect?.addEventListener('change', renderUpscaleEstimate);
+      loadUpscaleModels();
+
+      upscaleForm?.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        if (!upscaleFileInput?.files?.length) {
+          upscaleStatusEl.textContent = t('msg-no-file');
+          return;
+        }
+        const formData = new FormData();
+        formData.append('file', upscaleFileInput.files[0]);
+        formData.append('media_format', upscaleTargetSelect?.value || 'upscale_1080');
+        formData.append('upscale_model', upscaleModelSelect?.value || '');
+        upscaleProgress.reset();
+        upscaleProgress.start(getProgressSteps().ffmpeg);
+        upscaleStatusEl.textContent = upscaleEstimateEl.textContent || '…';
+        try {
+          await downloadFromEndpoint('/api/upscale/upload', {
+            statusTarget: upscaleStatusEl,
+            progress: upscaleProgress,
+            fetchOptions: { method: 'POST', body: formData },
+          });
+        } catch (error) {
+          console.error(error);
+        }
       });
 
       ffmpegForm?.addEventListener('submit', async (event) => {

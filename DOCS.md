@@ -269,3 +269,44 @@ Con `cq = crf` NVENC gastaba el doble de bytes sin ganar calidad: la escala de
 Además NVENC usa el bloque de codificación dedicado de la GPU, no los núcleos
 CUDA, así que apenas compite con los modelos de IA que corren en la misma
 máquina y deja la CPU libre.
+
+## 🔍 Mejorar la resolución de un vídeo
+
+`POST /api/upscale/upload` (multipart) sube un vídeo y lo devuelve escalado.
+`GET /api/upscale/models` lista los modelos con su aviso de tiempo.
+
+Campos: `file`, `media_format` (`upscale_1080` | `upscale_1440` | `upscale_2160`)
+y `upscale_model` opcional.
+
+El modelo no corre en VHS: lo sirve **oCabra**. VHS trocea el vídeo (sin audio),
+manda un segmento por petición, reensambla y remezcla el audio original. El
+reparto es deliberado — oCabra ya gestiona VRAM y expulsión, y aquí ya estaban
+afinados ffmpeg y NVENC.
+
+Los formatos se declaran por **resolución objetivo**, no por factor: el 4x de
+los modelos es un detalle de implementación. Y el post-proceso **solo reduce,
+nunca amplía**: si la salida del modelo se queda por debajo del objetivo se
+entrega tal cual, porque estirarla sería fingir una resolución que no existe.
+
+### Configuración
+
+```bash
+UPSCALE_ENDPOINT=            # vacío => se deriva de TRANSCRIPTION_ENDPOINT
+UPSCALE_API_KEY=             # vacío => se reutiliza TRANSCRIPTION_API_KEY
+# id - etiqueta - fps medidos. El fps alimenta el aviso de tiempo de la UI.
+UPSCALE_MODELS=upscaler/realesr-compact-x4 - Rápido - 63, flashvsr/FlashVSR-v1.1 - Máxima calidad - 2.1
+UPSCALE_SEGMENT_SECONDS=60
+```
+
+El `fps` **debe reflejar tu hardware**: el aviso de la interfaz se calcula a
+partir de él, así que un número inventado produce una promesa falsa.
+
+### Rendimiento medido (RTX 3090, salida 1080p)
+
+| nivel | fps | VRAM | 10 min de vídeo |
+|---|---|---|---|
+| Real-ESRGAN Compact | 63 | 51 MiB | ~5 min |
+| FlashVSR (difusión) | 2,1 | 19,1 GB | ~2 h 20 min |
+
+Medido de punta a punta a través de VHS: 150 s de vídeo tardaron 85 s (0,57x
+el tiempo real) con el nivel rápido.
