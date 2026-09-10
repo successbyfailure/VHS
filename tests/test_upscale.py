@@ -92,6 +92,51 @@ def test_build_download_name_no_duplica_extension():
     # Y un título que solo *parece* tener extensión tampoco.
     assert build_download_name("Episodio 1.5", _P("o.mp4"), "upscale_1080") == "Episodio_1.5.mp4"
 
+def test_short_side_filter_sirve_para_las_dos_orientaciones():
+    """El objetivo es el lado corto: "1080p" vale en horizontal y en vertical."""
+    f = upscale.short_side_filter(1080)
+    # Horizontal (iw>ih): se fija la altura. Vertical: se fija la anchura.
+    assert "if(gt(iw,ih),-2,1080)" in f
+    assert "if(gt(iw,ih),1080,-2)" in f
+
+
+def test_escala_nativa_define_el_prescalado_de_restauracion():
+    # Restaurar a 2560 implica reducir a 640 para que el 4x aterrice justo.
+    assert upscale.NATIVE_SCALE == 4
+    assert round(2560 / upscale.NATIVE_SCALE) == 640
+
+def test_plan_scaling_vertical_no_se_rechaza():
+    # 1440x2560 vertical: el lado corto es 1440, así que 2160p SÍ es ampliar.
+    # Con la lógica basada en altura esto se rechazaba por "ya tiene 2560px".
+    modo, pre = upscale.plan_scaling(1440, 2560, 2160)
+    assert modo == "upscale"
+    assert pre == 540, pre  # techo objetivo/4, para que el 4x aterrice justo
+
+
+def test_plan_scaling_acota_la_entrada_del_modelo():
+    """Sin este techo el 4x generaba fotogramas gigantes y agotaba la VRAM."""
+    _, pre = upscale.plan_scaling(1440, 2560, 2160)
+    assert pre * upscale.NATIVE_SCALE == 2160
+    _, pre = upscale.plan_scaling(3840, 2560, 1080)
+    assert pre * upscale.NATIVE_SCALE == 1080
+
+
+def test_plan_scaling_restaura_en_vez_de_rechazar():
+    modo, pre = upscale.plan_scaling(3840, 2560, 2160)
+    assert modo == "restore"
+    assert pre == 540
+
+
+def test_plan_scaling_no_preescala_si_ampliaria():
+    # Fuente ya pequeña: no se toca antes del modelo.
+    modo, pre = upscale.plan_scaling(480, 270, 1080)
+    assert modo == "upscale"
+    assert pre is None
+    # Y si el objetivo excede lo que el modelo puede dar, se entrega menos
+    # antes que fingir resolución.
+    modo, pre = upscale.plan_scaling(480, 270, 2160)
+    assert (modo, pre) == ("upscale", None)
+
 
 if __name__ == "__main__":
     for nombre, funcion in sorted(globals().items()):

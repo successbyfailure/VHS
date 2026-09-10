@@ -285,9 +285,29 @@ reparto es deliberado — oCabra ya gestiona VRAM y expulsión, y aquí ya estab
 afinados ffmpeg y NVENC.
 
 Los formatos se declaran por **resolución objetivo**, no por factor: el 4x de
-los modelos es un detalle de implementación. Y el post-proceso **solo reduce,
-nunca amplía**: si la salida del modelo se queda por debajo del objetivo se
-entrega tal cual, porque estirarla sería fingir una resolución que no existe.
+los modelos es un detalle de implementación.
+
+La resolución objetivo se refiere al **lado corto**, así que funciona igual con
+vídeo horizontal y vertical ("1080p" son 1080 líneas en horizontal y 1080
+columnas en vertical). Razonar con la altura rechazaba verticales perfectamente
+ampliables.
+
+Hay dos modos, elegidos automáticamente y expuestos en `x-vhs-mode`:
+
+- **`upscale`** — el lado corto es menor que el objetivo.
+- **`restore`** — el vídeo ya tiene esa resolución o más. En lugar de
+  rechazarlo, se reduce y se reconstruye. Es el caso más común de verdad
+  (resolución nominal alta sin detalle real) y es donde estos modelos rinden,
+  porque se entrenan con entradas degradadas de baja resolución.
+
+La entrada del modelo se limita siempre a `objetivo/4`, de modo que **el coste
+depende del objetivo y no de la resolución de origen**. Sin ese techo, un
+vertical 1440x2560 pedido a 2160p generaba fotogramas de 5760x10240 y agotaba
+la VRAM.
+
+Y nunca se amplía en el post-proceso: si el modelo se queda por debajo del
+objetivo se entrega tal cual y se informa en `x-vhs-delivered-resolution`,
+porque estirarlo sería fingir una resolución que no existe.
 
 ### Configuración
 

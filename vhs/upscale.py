@@ -25,6 +25,23 @@ from typing import Any, Dict, List, Optional, Tuple
 import httpx
 
 
+# Escala nativa de los modelos de escalado (4x en Compact y FlashVSR).
+NATIVE_SCALE = 4
+
+
+def short_side_filter(short: int) -> str:
+    """Filtro que lleva el **lado corto** a ``short`` conservando la relación.
+
+    Se trabaja con el lado corto y no con la altura porque "1080p" significa
+    1080 líneas en horizontal y 1080 columnas en vertical: usar la altura
+    rechazaba vídeos verticales perfectamente ampliables.
+    """
+    return (
+        f"scale=w='if(gt(iw,ih),-2,{short})':h='if(gt(iw,ih),{short},-2)'"
+        ":flags=lanczos"
+    )
+
+
 class UpscaleError(RuntimeError):
     """Fallo recuperable durante el escalado, con mensaje para el usuario."""
 
@@ -130,6 +147,40 @@ def models_for_ui() -> List[Dict[str, Any]]:
     return out
 
 
+def plan_scaling(
+    width: int, height: int, target_short_side: int
+) -> Tuple[str, Optional[int]]:
+    """Decide el modo y el pre-escalado de la entrada del modelo.
+
+    Devuelve ``(modo, lado_corto_previo)``; ``None`` en el segundo si no hay que
+    pre-escalar.
+
+    Dos reglas, ambas aprendidas a base de fallos:
+
+    * Se razona con el **lado corto**, no con la altura: "1080p" son 1080 líneas
+      en horizontal y 1080 columnas en vertical, y usar la altura rechazaba
+      vídeos verticales perfectamente ampliables.
+    * La entrada del modelo se limita a ``objetivo/4`` porque su escala es 4x
+      exacta. Así la salida aterriza en el objetivo y el coste depende del
+      objetivo y no de la resolución de origen: sin este techo, un vertical
+      1440x2560 pedido a 2160p generaba fotogramas de 5760x10240 y agotaba la
+      VRAM.
+
+    Si el vídeo ya tiene la resolución pedida o más, el modo es ``restore``: se
+    reduce y se reconstruye en vez de rechazarlo. Es el caso más común de verdad
+    — material con resolución nominal alta y sin detalle real — y es además
+    donde estos modelos rinden, porque se entrenan con entradas degradadas de
+    baja resolución.
+    """
+    short_side = min(width, height)
+    mode = "restore" if short_side >= target_short_side else "upscale"
+    ideal_input = max(64, round(target_short_side / NATIVE_SCALE))
+    pre_short_side = min(short_side, ideal_input)
+    # Solo se pre-escala si de verdad reduce: ampliar antes del modelo sería
+    # regalarle desenfoque.
+    return mode, (pre_short_side if pre_short_side < short_side else None)
+
+
 def probe(path: Path) -> Dict[str, Any]:
     result = subprocess.run(
         [
@@ -189,7 +240,9 @@ def _run(cmd: List[str], *, what: str) -> None:
         raise UpscaleError(f"{what} falló{': ' + detail if detail else ''}")
 
 
-def split_video_only(source: Path, work: Path, ffmpeg: str) -> List[Path]:
+def split_video_only(
+    source: Path, work: Path, ffmpeg: str, *, pre_short_side: Optional[int] = None
+) -> List[Path]:
     """Trocea solo el vídeo, alineando cortes a fotograma clave.
 
     Se recodifica a CRF 12 (visualmente sin pérdida) en vez de copiar el flujo:
@@ -198,10 +251,14 @@ def split_video_only(source: Path, work: Path, ffmpeg: str) -> List[Path]:
     """
     seconds = segment_seconds()
     pattern = work / "seg_%05d.mp4"
+    filters = []
+    if pre_short_side:
+        filters.append(short_side_filter(pre_short_side))
     _run(
         [
             ffmpeg, "-y", "-v", "error", "-i", str(source),
             "-an", "-map", "0:v:0",
+            *(["-vf", ",".join(filters)] if filters else []),
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "12",
             "-force_key_frames", f"expr:gte(t,n_forced*{seconds})",
             "-f", "segment", "-segment_time", str(seconds),
@@ -215,9 +272,7 @@ def split_video_only(source: Path, work: Path, ffmpeg: str) -> List[Path]:
     return segments
 
 
-def upscale_segment(
-    segment: Path, *, model: str, target_height: int, timeout: float
-) -> bytes:
+def upscale_segment(segment: Path, *, model: str, timeout: float) -> bytes:
     url = f"{endpoint()}/video/upscale"
     headers = {}
     key = api_key()
@@ -225,7 +280,11 @@ def upscale_segment(
         headers["Authorization"] = f"Bearer {key}"
     with segment.open("rb") as handle:
         files = {"file": (segment.name, handle.read(), "video/mp4")}
-    data = {"model": model, "target_height": str(target_height), "crf": "14"}
+    # No se le pasa target_height: el worker reescala por altura y aquí se
+    # trabaja con el lado corto, así que uno desharía al otro en vertical. VHS
+    # ya pre-escala para que el 4x del modelo aterrice en el objetivo, y el
+    # ajuste fino se hace en la codificación final.
+    data = {"model": model, "crf": "14"}
     try:
         response = httpx.post(url, headers=headers, files=files, data=data, timeout=timeout)
     except httpx.HTTPError as exc:
@@ -241,7 +300,13 @@ def upscale_segment(
 
 
 def concat_and_remux(
-    pieces: List[Path], source: Path, output: Path, ffmpeg: str, *, nvenc: bool
+    pieces: List[Path],
+    source: Path,
+    output: Path,
+    ffmpeg: str,
+    *,
+    nvenc: bool,
+    target_short_side: Optional[int] = None,
 ) -> None:
     """Une los segmentos y devuelve el audio original a su sitio."""
     list_file = output.parent / "concat.txt"
@@ -257,6 +322,14 @@ def concat_and_remux(
     )
 
     cmd = [ffmpeg, "-y", "-v", "error", "-i", str(joined)]
+    # Ajuste fino al objetivo en la codificación que ya existía. Solo reduce:
+    # si el modelo se quedó por debajo (fuente muy pequeña para el objetivo
+    # pedido), estirarlo aquí sería fingir una resolución que no existe, así
+    # que se entrega lo que hay.
+    if target_short_side:
+        joined_short = min(probe(joined)["width"], probe(joined)["height"])
+        if joined_short > target_short_side:
+            cmd += ["-vf", short_side_filter(target_short_side)]
     if has_audio(source):
         # El audio se copia del original: no ha pasado por el escalado y
         # recodificarlo solo añadiría una generación de pérdida.
@@ -284,32 +357,35 @@ def upscale_file(
     info = probe(source)
     if info["width"] <= 0 or info["height"] <= 0:
         raise UpscaleError("El archivo no contiene una pista de vídeo utilizable")
-    if info["height"] >= target_height:
-        raise UpscaleError(
-            f"El vídeo ya tiene {info['height']}px de alto; elige un objetivo mayor "
-            f"que {info['height']}p o súbelo con menos resolución"
-        )
+
+    mode, pre_short_side = plan_scaling(info["width"], info["height"], target_height)
 
     work = Path(tempfile.mkdtemp(prefix="vhs_upscale_"))
     output = work / "upscaled.mp4"
     try:
-        segments = split_video_only(source, work, ffmpeg)
+        segments = split_video_only(
+            source, work, ffmpeg, pre_short_side=pre_short_side
+        )
         pieces: List[Path] = []
         for index, segment in enumerate(segments):
-            body = upscale_segment(
-                segment, model=model, target_height=target_height, timeout=segment_timeout
-            )
+            body = upscale_segment(segment, model=model, timeout=segment_timeout)
             piece = work / f"up_{index:05d}.mp4"
             piece.write_bytes(body)
             pieces.append(piece)
-        concat_and_remux(pieces, source, output, ffmpeg, nvenc=nvenc)
+        concat_and_remux(
+            pieces, source, output, ffmpeg,
+            nvenc=nvenc, target_short_side=target_height,
+        )
     except Exception:
         cleanup_workdir(work)
         raise
 
+    delivered = probe(output)
     metadata = {
         "source_resolution": f"{info['width']}x{info['height']}",
+        "delivered_resolution": f"{delivered['width']}x{delivered['height']}",
         "target_height": target_height,
+        "mode": mode,
         "segments": len(pieces),
         "frames": info["frames"],
         "upscale_model": model,

@@ -3009,6 +3009,12 @@ async def upscale_upload(
             "x-vhs-upscale-model": metadata["upscale_model"],
             "x-vhs-source-resolution": metadata["source_resolution"],
             "x-vhs-segments": str(metadata["segments"]),
+            # "restore" avisa de que el vídeo se redujo antes de reconstruirlo,
+            # en vez de ampliarse: el usuario debe poder saberlo.
+            "x-vhs-mode": metadata["mode"],
+            # Puede ser menor que lo pedido si la fuente no daba para más:
+            # se prefiere entregar menos que fingir resolución.
+            "x-vhs-delivered-resolution": metadata["delivered_resolution"],
         },
     )
     await run_in_threadpool(
