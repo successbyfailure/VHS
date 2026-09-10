@@ -356,7 +356,7 @@ partir de él, así que un número inventado produce una promesa falsa.
 | nivel | fps | VRAM | 10 min de vídeo | calidad |
 |---|---|---|---|---|
 | Real-ESRGAN Compact | 53 | 394 MiB | ~6 min | limpia bordes, no añade textura |
-| 4x UltraSharp | 6,0 | 4,6 GB | ~50 min | detalle claramente mayor |
+| 4x UltraSharpV2 Lite | 12,9 | 789 MiB | ~23 min | detalle claramente mayor |
 | FlashVSR (difusión) | 2,1 | 19,1 GB | ~2 h 23 min | máxima textura |
 
 Los tres medidos en una RTX 3090 con salida 1080p. Compact está limitado por
@@ -404,3 +404,30 @@ no hay que tocar código.
 Ojo con el SSIM: penaliza a los modelos que añaden detalle, porque el detalle
 sintetizado no coincide píxel a píxel. Remacri gana en SSIM siendo el más
 conservador. Para esta decisión hay que mirar las imágenes.
+
+### Arquitecturas: PLKSR gana, DAT queda descartado
+
+El worker carga los pesos con **spandrel**, que reconoce 42 arquitecturas y
+detecta la correcta sola. Medido sobre el mismo clip (RTX 3060, para poder
+comparar entre sí; la 3090 estaba ocupada):
+
+| pesos | arquitectura | precisión | fps | VRAM | SSIM |
+|---|---|---|---|---|---|
+| `4x-UltraSharpV2_Lite` | **PLKSR** | fp16 | **6,06** | **789 MiB** | **0,917** |
+| `4x-UltraSharp` | ESRGAN | fp16 | 2,48 | 4,1 GB | 0,896 |
+| `4x-UltraSharpV2` | DAT | fp32 | 0,30 | 4,3 GB | 0,914 |
+| `4xNomos2_hq_dat2` | DAT | fp32 | 0,30 | 4,3 GB | — |
+
+**PLKSR gana en las tres dimensiones a la vez**: 2,4x más rápido que ESRGAN,
+5x menos VRAM y mejor SSIM. Con 789 MiB entra en la 3060 y deja la grande
+libre.
+
+**DAT queda descartado**: 0,30 fps es 8x más lento que ESRGAN y más lento que
+un modelo de difusión. La causa es que **solo funciona en fp32** (spandrel lo
+declara con `supports_half=False`), y un transformer sin fp16 pierde los
+tensor cores. Su calidad no compensa: está a la par con la variante Lite, que
+es 20 veces más rápida.
+
+Dos consecuencias de usar spandrel que conviene no perder: la precisión la
+decide el modelo (forzar fp16 en DAT rompería la salida) y **la escala también**,
+así que se pueden usar pesos 2x u 8x sin tocar código.
