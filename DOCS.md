@@ -356,7 +356,7 @@ partir de él, así que un número inventado produce una promesa falsa.
 | nivel | fps | VRAM | 10 min de vídeo | calidad |
 |---|---|---|---|---|
 | Real-ESRGAN Compact | 53 | 394 MiB | ~6 min | limpia bordes, no añade textura |
-| Real-ESRGAN x4plus | 6,0 | 4,6 GB | ~50 min | detalle claramente mayor |
+| 4x UltraSharp | 6,0 | 4,6 GB | ~50 min | detalle claramente mayor |
 | FlashVSR (difusión) | 2,1 | 19,1 GB | ~2 h 23 min | máxima textura |
 
 Los tres medidos en una RTX 3090 con salida 1080p. Compact está limitado por
@@ -381,3 +381,26 @@ de VRAM real: **FlashVSR gasta 19,1 GB para 1080p**, y 1440p son 1,78x los
 píxeles, así que no entra en una tarjeta de 24 GB. Sin declararlo, el usuario
 elegía 1440p y se enteraba del fallo tras minutos de GPU; ahora se rechaza al
 instante y el mensaje sugiere el otro modelo.
+
+### Elegir pesos: el nivel intermedio es intercambiable
+
+Todos los modelos RRDBNet cuestan **exactamente lo mismo** (5,9 fps y 4,6 GB
+medidos), así que elegir entre ellos es gratis y es solo una cuestión de
+gusto. Medido sobre el mismo clip:
+
+| pesos | SSIM | detalle observado |
+|---|---|---|
+| `4x-UltraSharp` (actual) | 0,896 | el más nítido: líneas finas muy separadas, grano en superficies |
+| `4x_NMKD-Siax_200k` | 0,895 | prácticamente idéntico a UltraSharp |
+| `4x_foolhardy_Remacri` | 0,911 | algo más suave, el más natural |
+| `RealESRGAN_x4plus` | 0,901 | el oficial, referencia |
+| `4x_NMKD-Superscale` | 0,861 | **descartado**: inventa una textura de lienzo cruzado |
+
+Cambiar de pesos es registrar el `.pth` en oCabra y editar `UPSCALE_MODELS`. El
+worker detecta la arquitectura por las claves del `state_dict`, incluido el
+nombrado ESRGAN antiguo que usa casi todo el catálogo de la comunidad, así que
+no hay que tocar código.
+
+Ojo con el SSIM: penaliza a los modelos que añaden detalle, porque el detalle
+sintetizado no coincide píxel a píxel. Remacri gana en SSIM siendo el más
+conservador. Para esta decisión hay que mirar las imágenes.
