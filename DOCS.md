@@ -273,8 +273,32 @@ máquina y deja la CPU libre.
 
 ## 🔍 Mejorar la resolución de un vídeo
 
-`POST /api/upscale/upload` (multipart) sube un vídeo y lo devuelve escalado.
-`GET /api/upscale/models` lista los modelos con su aviso de tiempo.
+### Cola de trabajos (recomendado)
+
+```
+POST   /api/upscale/jobs            → 202 {id, status, estimate_human, queued_ahead}
+GET    /api/upscale/jobs            → {jobs: [...]}
+GET    /api/upscale/jobs/{id}       → {status, progress, segments_done/total, elapsed_seconds}
+GET    /api/upscale/jobs/{id}/download → el vídeo, cuando status == "done"
+DELETE /api/upscale/jobs/{id}       → pide cancelación
+```
+
+Los trabajos se ejecutan **de uno en uno**: el cuello es la GPU y lanzar dos en
+paralelo solo hace que se pisen la VRAM. Los metadatos se persisten en disco,
+así que un reinicio no pierde un resultado ya calculado; un trabajo que estaba
+en curso al reiniciar se marca como error, porque no es reanudable. La
+cancelación se aplica **entre segmentos**: matar un proceso de GPU a mitad es
+peor que esperar a que acabe el segmento en curso. Los terminados se conservan
+24 h (`JOB_TTL_SECONDS`).
+
+### Vía síncrona
+
+`POST /api/upscale/upload` (multipart) sube un vídeo y lo devuelve escalado en
+la misma petición. Sirve para el nivel rápido y clips cortos; con el de
+difusión (~20x el tiempo real) usa la cola.
+
+`GET /api/upscale/models` lista los modelos con su aviso de tiempo y su
+**tope de resolución**.
 
 Campos: `file`, `media_format` (`upscale_1080` | `upscale_1440` | `upscale_2160`)
 y `upscale_model` opcional.
@@ -319,7 +343,8 @@ que 1080 estirado.
 UPSCALE_ENDPOINT=            # vacío => se deriva de TRANSCRIPTION_ENDPOINT
 UPSCALE_API_KEY=             # vacío => se reutiliza TRANSCRIPTION_API_KEY
 # id - etiqueta - fps medidos. El fps alimenta el aviso de tiempo de la UI.
-UPSCALE_MODELS=upscaler/realesr-compact-x4 - Rápido - 63, flashvsr/FlashVSR-v1.1 - Máxima calidad - 2.1
+# id - etiqueta - fps medidos - lado corto máximo (0 = sin límite)
+UPSCALE_MODELS=real-esrgan-compact-x4 - Rápido - 63 - 0, flashvsr-v1-1 - Máxima calidad - 2.1 - 1080
 UPSCALE_SEGMENT_SECONDS=60
 ```
 
@@ -340,3 +365,12 @@ material largo.
 
 Medido de punta a punta a través de VHS: 150 s de vídeo tardaron 85 s (0,57x
 el tiempo real) con el nivel rápido.
+
+### Topes de resolución por modelo
+
+El cuarto campo de `UPSCALE_MODELS` es el lado corto máximo que el modelo
+aguanta en esta máquina. Existe porque los modelos de difusión tienen un techo
+de VRAM real: **FlashVSR gasta 19,1 GB para 1080p**, y 1440p son 1,78x los
+píxeles, así que no entra en una tarjeta de 24 GB. Sin declararlo, el usuario
+elegía 1440p y se enteraba del fallo tras minutos de GPU; ahora se rechaza al
+instante y el mensaje sugiere el otro modelo.

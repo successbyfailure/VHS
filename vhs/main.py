@@ -53,6 +53,7 @@ import yt_dlp
 from openai import OpenAI
 
 from versioning import get_version
+from vhs import jobs as jobs_mod
 from vhs import upscale as upscale_mod
 
 APP_TITLE = "VHS · Video Harvester Service"
@@ -753,6 +754,38 @@ KNOWN_MEDIA_EXTENSIONS = {
     ".mp3", ".ogg", ".oga", ".opus", ".wav", ".flac", ".aac", ".m4a", ".wma",
     ".srt", ".vtt", ".json", ".txt",
 }
+
+UPSCALE_JOBS_DIR = Path(os.getenv("UPSCALE_JOBS_DIR", str(CACHE_DIR.parent / "upscale_jobs")))
+_job_store = jobs_mod.JobStore(UPSCALE_JOBS_DIR)
+_job_queue = jobs_mod.JobQueue(_job_store)
+
+
+def _run_upscale_job(params: Dict, on_progress, should_cancel) -> Dict:
+    """Ejecutor del trabajo de escalado. Corre en un hilo, no en el bucle."""
+    source = Path(params["source"])
+    try:
+        output, metadata = upscale_mod.upscale_file(
+            source,
+            model=params["model"],
+            target_height=params["target_height"],
+            ffmpeg=FFMPEG_BINARY,
+            nvenc=FFMPEG_ENABLE_NVENC,
+            on_progress=on_progress,
+            should_cancel=should_cancel,
+        )
+    finally:
+        # El original subido ya no hace falta ni si falla.
+        cleanup_path(source)
+    return {
+        "path": output,
+        "name": build_download_name(
+            params.get("filename") or "upscaled", output, params["media_format"]
+        ),
+        "metadata": metadata,
+    }
+
+
+_job_queue.register("upscale", _run_upscale_job)
 
 TRANSCRIPTION_FILE_SUFFIX = ".transcript.json"
 
@@ -2935,20 +2968,10 @@ async def upscale_models():
     }
 
 
-@app.post("/api/upscale/upload")
-async def upscale_upload(
-    request: Request,
-    background_tasks: BackgroundTasks,
-    media_format: str = Form("upscale_1080"),
-    upscale_model: str = Form(""),
-    file: UploadFile = File(...),
-):
-    """Sube un vídeo y devuélvelo escalado.
-
-    Es síncrono como el resto de VHS. Con el nivel rápido va a ~1x el tiempo
-    real, así que encaja; con un modelo de difusión (~9x) esto se queda corto
-    y hará falta una cola de trabajos.
-    """
+def _validate_upscale_request(
+    media_format: str, upscale_model: str, file: UploadFile
+) -> Tuple[str, str]:
+    """Valida formato y modelo. Devuelve (formato normalizado, modelo elegido)."""
     format_value = normalize_media_format(media_format)
     if format_value not in UPSCALE_FORMATS:
         raise HTTPException(
@@ -2971,6 +2994,150 @@ async def upscale_upload(
             status_code=400,
             detail="Modelo de escalado no permitido. Revisa UPSCALE_MODELS.",
         )
+    # Techo de resolución por modelo. Se comprueba aquí y no cuando falla la
+    # GPU: enterarse de un límite de VRAM después de minutos de cómputo es
+    # inaceptable, y el mensaje puede además sugerir la alternativa.
+    target = UPSCALE_FORMATS[format_value]
+    chosen = next((m for m in available if m["id"] == selected), None)
+    limit = int((chosen or {}).get("max_short_side") or 0)
+    if limit and target > limit:
+        alternativas = [
+            m["label"] for m in available
+            if m["id"] != selected and (not m.get("max_short_side") or m["max_short_side"] >= target)
+        ]
+        sugerencia = f" Prueba con: {', '.join(alternativas)}." if alternativas else ""
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"«{chosen['label']}» no llega a {target}p en este hardware "
+                f"(su tope es {limit}p por memoria de GPU).{sugerencia}"
+            ),
+        )
+    return format_value, selected
+
+
+@app.post("/api/upscale/jobs", status_code=202)
+async def upscale_job_create(
+    request: Request,
+    media_format: str = Form("upscale_1080"),
+    upscale_model: str = Form(""),
+    file: UploadFile = File(...),
+):
+    """Encola un escalado y responde al momento con el identificador.
+
+    Es la vía recomendada: el nivel de difusión va a ~20x el tiempo real, así
+    que una petición síncrona se quedaría abierta horas.
+    """
+    format_value, selected = _validate_upscale_request(media_format, upscale_model, file)
+
+    ensure_storage_ready()
+    source = await save_upload_file(file)
+    try:
+        info = await run_in_threadpool(upscale_mod.probe, source)
+    except upscale_mod.UpscaleError as exc:
+        cleanup_path(source)
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    fps = next((m["fps"] for m in upscale_mod.parse_models() if m["id"] == selected), 0.0)
+    estimate = info["frames"] / fps if fps > 0 else 0.0
+
+    job = jobs_mod.new_job(
+        "upscale",
+        {
+            "source": str(source),
+            "model": selected,
+            "target_height": UPSCALE_FORMATS[format_value],
+            "media_format": format_value,
+            "filename": file.filename or "upscaled",
+        },
+        estimate_seconds=estimate,
+    )
+    _job_queue.submit(job)
+    await run_in_threadpool(
+        record_download_event, format_value, False, None, detect_request_source(request)
+    )
+    payload = job.public()
+    payload["queued_ahead"] = max(0, _job_queue.pending() - 1)
+    payload["estimate_human"] = upscale_mod.format_duration_es(estimate)
+    return JSONResponse(payload, status_code=202)
+
+
+@app.get("/api/upscale/jobs", response_class=JSONResponse)
+async def upscale_job_list():
+    _job_store.purge_expired(upscale_mod.cleanup_workdir)
+    return {"jobs": [job.public() for job in _job_store.list()]}
+
+
+@app.get("/api/upscale/jobs/{job_id}", response_class=JSONResponse)
+async def upscale_job_status(job_id: str):
+    job = _job_store.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Trabajo no encontrado")
+    payload = job.public()
+    payload["estimate_human"] = upscale_mod.format_duration_es(job.estimate_seconds)
+    return payload
+
+
+@app.get("/api/upscale/jobs/{job_id}/download")
+async def upscale_job_download(job_id: str):
+    job = _job_store.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Trabajo no encontrado")
+    if job.status != jobs_mod.STATUS_DONE or not job.result_path:
+        raise HTTPException(
+            status_code=409,
+            detail=f"El trabajo está en estado '{job.status}', todavía no hay resultado",
+        )
+    path = Path(job.result_path)
+    if not path.exists():
+        raise HTTPException(status_code=410, detail="El resultado ya se ha limpiado")
+    # No se borra al descargar: el TTL se encarga, y así se puede descargar
+    # más de una vez.
+    return FileResponse(
+        path=path,
+        media_type="video/mp4",
+        filename=job.result_name or path.name,
+        headers={
+            "x-vhs-upscale-model": str(job.metadata.get("upscale_model", "")),
+            "x-vhs-mode": str(job.metadata.get("mode", "")),
+            "x-vhs-delivered-resolution": str(job.metadata.get("delivered_resolution", "")),
+        },
+    )
+
+
+@app.delete("/api/upscale/jobs/{job_id}", response_class=JSONResponse)
+async def upscale_job_cancel(job_id: str):
+    job = _job_store.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Trabajo no encontrado")
+    if job.status in jobs_mod.TERMINAL_STATUSES:
+        if job.result_path:
+            await run_in_threadpool(
+                upscale_mod.cleanup_workdir, Path(job.result_path).parent
+            )
+        return {"status": job.status, "detail": "El trabajo ya había terminado"}
+    # Se pide la cancelación y se aplica entre segmentos: matar un proceso de
+    # GPU a mitad es peor que esperar a que acabe el segmento en curso.
+    job.cancel_requested = True
+    _job_store.persist(job)
+    return {"status": "cancelling", "detail": "Se detendrá al terminar el segmento en curso"}
+
+
+@app.post("/api/upscale/upload")
+async def upscale_upload(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    media_format: str = Form("upscale_1080"),
+    upscale_model: str = Form(""),
+    file: UploadFile = File(...),
+):
+    """Sube un vídeo y devuélvelo escalado.
+
+    Es síncrono como el resto de VHS. Con el nivel rápido va a ~1x el tiempo
+    real, así que encaja; con un modelo de difusión (~9x) esto se queda corto
+    y hará falta una cola de trabajos.
+    """
+    format_value, selected = _validate_upscale_request(media_format, upscale_model, file)
 
     temp_path: Optional[Path] = None
     output_path: Optional[Path] = None

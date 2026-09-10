@@ -1513,8 +1513,110 @@
         }
       }
 
-      upscaleModelSelect?.addEventListener('change', renderUpscaleEstimate);
+      function upscaleTargetValue() {
+        const raw = upscaleTargetSelect?.value || 'upscale_1080';
+        return parseInt(raw.replace('upscale_', ''), 10) || 1080;
+      }
+
+      function applyUpscaleLimits() {
+        // Las resoluciones que el modelo elegido no aguanta se desactivan en
+        // lugar de dejar que el usuario las elija y falle tras minutos de GPU.
+        const selected = upscaleModels.find((m) => m.id === upscaleModelSelect?.value);
+        const limit = selected?.max_short_side || 0;
+        let firstEnabled = null;
+        Array.from(upscaleTargetSelect?.options || []).forEach((option) => {
+          const value = parseInt(option.value.replace('upscale_', ''), 10) || 0;
+          const blocked = limit > 0 && value > limit;
+          option.disabled = blocked;
+          option.textContent = option.textContent.replace(/ — no disponible.*$/, '');
+          if (blocked) option.textContent += ` — no disponible con ${selected.label}`;
+          else if (!firstEnabled) firstEnabled = option.value;
+        });
+        const current = upscaleTargetSelect?.selectedOptions?.[0];
+        if (current?.disabled && firstEnabled) upscaleTargetSelect.value = firstEnabled;
+      }
+
+      function renderUpscaleHints() {
+        renderUpscaleEstimate();
+        applyUpscaleLimits();
+      }
+
+      upscaleFileInput?.addEventListener('change', () => {
+        // Aviso honesto: en material que ya tiene la resolución pedida el modo
+        // restauración reduce y reconstruye, y sobre vídeo con detalle real eso
+        // resta más que suma.
+        const file = upscaleFileInput.files?.[0];
+        if (!file) return;
+        const video = document.createElement('video');
+        video.preload = 'metadata';
+        video.onloadedmetadata = () => {
+          const shortSide = Math.min(video.videoWidth, video.videoHeight);
+          URL.revokeObjectURL(video.src);
+          if (shortSide && shortSide >= upscaleTargetValue()) {
+            upscaleStatusEl.textContent =
+              `El vídeo ya tiene ${shortSide}px de lado corto: se restaurará (se reduce y se ` +
+              'reconstruye). Útil si la calidad es mala; si el detalle es bueno, no gana nada.';
+          } else {
+            upscaleStatusEl.textContent = '';
+          }
+        };
+        video.src = URL.createObjectURL(file);
+      });
+
+      upscaleModelSelect?.addEventListener('change', renderUpscaleHints);
+      upscaleTargetSelect?.addEventListener('change', renderUpscaleHints);
       loadUpscaleModels();
+
+      let upscalePollTimer = null;
+
+      function stopUpscalePolling() {
+        if (upscalePollTimer) clearInterval(upscalePollTimer);
+        upscalePollTimer = null;
+      }
+
+      async function pollUpscaleJob(jobId) {
+        try {
+          const response = await fetch(`/api/upscale/jobs/${jobId}`);
+          if (!response.ok) throw new Error(describeApiError(await response.json().catch(() => ({}))));
+          const job = await response.json();
+          const partes = [];
+          if (job.status === 'queued') partes.push('En cola');
+          if (job.status === 'running') {
+            if (job.segments_total > 1) {
+              const pct = Math.round((job.progress || 0) * 100);
+              partes.push(`Procesando ${job.segments_done}/${job.segments_total} (${pct}%)`);
+            } else if (job.estimate_seconds > 0) {
+              // Con un solo segmento no hay granularidad real, así que se
+              // muestra el avance sobre la estimación y se dice que lo es:
+              // una barra clavada en 0% durante minutos parece que está roto.
+              const pct = Math.min(99, Math.round((job.elapsed_seconds / job.estimate_seconds) * 100));
+              partes.push(`Procesando (~${pct}% del tiempo estimado)`);
+            } else {
+              partes.push('Procesando');
+            }
+          }
+          if (job.estimate_human && job.status !== 'done') partes.push(`estimado ${job.estimate_human}`);
+          if (job.elapsed_seconds) partes.push(`transcurrido ${Math.round(job.elapsed_seconds)}s`);
+          upscaleStatusEl.textContent = partes.join(' · ') || job.status;
+
+          if (job.status === 'done') {
+            stopUpscalePolling();
+            upscaleStatusEl.textContent = 'Listo, descargando…';
+            await downloadFromEndpoint(`/api/upscale/jobs/${jobId}/download`, {
+              statusTarget: upscaleStatusEl,
+              progress: upscaleProgress,
+              fetchOptions: { method: 'GET' },
+            });
+          } else if (job.status === 'error' || job.status === 'cancelled') {
+            stopUpscalePolling();
+            upscaleProgress.reset();
+            upscaleStatusEl.textContent = job.error || `Trabajo ${job.status}`;
+          }
+        } catch (error) {
+          stopUpscalePolling();
+          upscaleStatusEl.textContent = error.message || 'Error consultando el trabajo';
+        }
+      }
 
       upscaleForm?.addEventListener('submit', async (event) => {
         event.preventDefault();
@@ -1526,17 +1628,24 @@
         formData.append('file', upscaleFileInput.files[0]);
         formData.append('media_format', upscaleTargetSelect?.value || 'upscale_1080');
         formData.append('upscale_model', upscaleModelSelect?.value || '');
+        stopUpscalePolling();
         upscaleProgress.reset();
         upscaleProgress.start(getProgressSteps().ffmpeg);
-        upscaleStatusEl.textContent = upscaleEstimateEl.textContent || '…';
+        upscaleStatusEl.textContent = 'Enviando…';
         try {
-          await downloadFromEndpoint('/api/upscale/upload', {
-            statusTarget: upscaleStatusEl,
-            progress: upscaleProgress,
-            fetchOptions: { method: 'POST', body: formData },
-          });
+          // Se encola en vez de esperar en la petición: el nivel de difusión
+          // tarda horas y ninguna conexión HTTP aguanta eso.
+          const response = await fetch('/api/upscale/jobs', { method: 'POST', body: formData });
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(describeApiError(payload));
+          upscaleStatusEl.textContent = payload.estimate_human
+            ? `En cola · estimado ${payload.estimate_human}`
+            : 'En cola';
+          upscalePollTimer = setInterval(() => pollUpscaleJob(payload.id), 4000);
+          pollUpscaleJob(payload.id);
         } catch (error) {
-          console.error(error);
+          upscaleProgress.reset();
+          upscaleStatusEl.textContent = error.message || 'Error al encolar el trabajo';
         }
       });
 

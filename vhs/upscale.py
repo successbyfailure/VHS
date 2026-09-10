@@ -20,7 +20,7 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import httpx
 
@@ -44,6 +44,10 @@ def short_side_filter(short: int) -> str:
 
 class UpscaleError(RuntimeError):
     """Fallo recuperable durante el escalado, con mensaje para el usuario."""
+
+
+class UpscaleCancelled(UpscaleError):
+    """El trabajo se canceló entre segmentos."""
 
 
 def cleanup_workdir(path: Path) -> None:
@@ -87,11 +91,18 @@ def segment_seconds() -> int:
 
 
 def parse_models(raw: str = "") -> List[Dict[str, Any]]:
-    """Interpreta ``UPSCALE_MODELS``: ``id - etiqueta - fps`` separados por comas.
+    """Interpreta ``UPSCALE_MODELS``: ``id - etiqueta - fps - max`` por comas.
 
-    El ``fps`` es el rendimiento medido del modelo y sirve para estimar
-    tiempos en la interfaz. Se declara en configuración en vez de codificarse
-    para que el aviso no mienta cuando cambie el hardware.
+    El ``fps`` es el rendimiento medido y alimenta la estimación de tiempo de
+    la interfaz; se declara en configuración en vez de codificarse para que el
+    aviso no mienta cuando cambie el hardware.
+
+    ``max`` es el lado corto máximo que el modelo aguanta en esta máquina, y
+    existe porque los modelos de difusión tienen un techo de VRAM real: la
+    memoria de FlashVSR depende de la resolución de salida, y medido son
+    19,1 GB para 1080p, con lo que 1440p (1,78x los píxeles) no entra en una
+    tarjeta de 24 GB. Sin declararlo, el usuario elegía 1440p y se enteraba
+    del fallo después de minutos de GPU. 0 o ausente significa sin límite.
     """
     raw = raw or _env("UPSCALE_MODELS")
     models: List[Dict[str, Any]] = []
@@ -108,7 +119,18 @@ def parse_models(raw: str = "") -> List[Dict[str, Any]]:
             fps = float(parts[2]) if len(parts) > 2 and parts[2] else 0.0
         except ValueError:
             fps = 0.0
-        models.append({"id": model_id, "label": label, "fps": fps})
+        try:
+            max_short_side = int(parts[3]) if len(parts) > 3 and parts[3] else 0
+        except ValueError:
+            max_short_side = 0
+        models.append(
+            {
+                "id": model_id,
+                "label": label,
+                "fps": fps,
+                "max_short_side": max_short_side,
+            }
+        )
     return models
 
 
@@ -140,11 +162,10 @@ def estimate_note(fps: float, *, reference_minutes: int = 10, video_fps: int = 3
 
 
 def models_for_ui() -> List[Dict[str, Any]]:
-    out = []
-    for model in parse_models():
-        note = estimate_note(model["fps"])
-        out.append({**model, "estimate": note})
-    return out
+    return [
+        {**model, "estimate": estimate_note(model["fps"])}
+        for model in parse_models()
+    ]
 
 
 def plan_scaling(
@@ -352,8 +373,15 @@ def upscale_file(
     ffmpeg: str,
     nvenc: bool,
     segment_timeout: float = 3600.0,
+    on_progress: Optional[Callable[[int, int], None]] = None,
+    should_cancel: Optional[Callable[[], bool]] = None,
 ) -> Tuple[Path, Dict[str, Any]]:
-    """Escala un fichero completo. Devuelve (ruta de salida, metadatos)."""
+    """Escala un fichero completo. Devuelve (ruta de salida, metadatos).
+
+    ``on_progress(hechos, total)`` se llama al acabar cada segmento y
+    ``should_cancel()`` se consulta entre segmentos: no se aborta a mitad de un
+    segmento para no dejar a medias un proceso de GPU.
+    """
     info = probe(source)
     if info["width"] <= 0 or info["height"] <= 0:
         raise UpscaleError("El archivo no contiene una pista de vídeo utilizable")
@@ -366,12 +394,18 @@ def upscale_file(
         segments = split_video_only(
             source, work, ffmpeg, pre_short_side=pre_short_side
         )
+        if on_progress:
+            on_progress(0, len(segments))
         pieces: List[Path] = []
         for index, segment in enumerate(segments):
+            if should_cancel and should_cancel():
+                raise UpscaleCancelled("Trabajo cancelado")
             body = upscale_segment(segment, model=model, timeout=segment_timeout)
             piece = work / f"up_{index:05d}.mp4"
             piece.write_bytes(body)
             pieces.append(piece)
+            if on_progress:
+                on_progress(index + 1, len(segments))
         concat_and_remux(
             pieces, source, output, ffmpeg,
             nvenc=nvenc, target_short_side=target_height,

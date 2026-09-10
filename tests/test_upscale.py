@@ -137,6 +137,16 @@ def test_plan_scaling_no_preescala_si_ampliaria():
     modo, pre = upscale.plan_scaling(480, 270, 2160)
     assert (modo, pre) == ("upscale", None)
 
+def test_parse_models_lee_el_tope_de_resolucion():
+    # El cuarto campo es el lado corto máximo: FlashVSR no llega a 1440p en
+    # una tarjeta de 24 GB y hay que saberlo antes de gastar GPU.
+    modelos = upscale.parse_models("a - Rápido - 63 - 0, b - Calidad - 2.1 - 1080")
+    assert modelos[0]["max_short_side"] == 0
+    assert modelos[1]["max_short_side"] == 1080
+    # Ausente o inválido = sin límite, no un fallo.
+    assert upscale.parse_models("c - X - 10")[0]["max_short_side"] == 0
+    assert upscale.parse_models("d - X - 10 - mucho")[0]["max_short_side"] == 0
+
 
 if __name__ == "__main__":
     for nombre, funcion in sorted(globals().items()):
