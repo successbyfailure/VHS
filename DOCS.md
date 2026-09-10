@@ -309,6 +309,10 @@ Y nunca se amplía en el post-proceso: si el modelo se queda por debajo del
 objetivo se entrega tal cual y se informa en `x-vhs-delivered-resolution`,
 porque estirarlo sería fingir una resolución que no existe.
 
+Esto pasa de forma habitual con FlashVSR: recorta a múltiplos de 128, así que
+pidiendo 1080p entrega 1024 de lado corto. Es intencionado — mejor 1024 real
+que 1080 estirado.
+
 ### Configuración
 
 ```bash
@@ -327,7 +331,12 @@ partir de él, así que un número inventado produce una promesa falsa.
 | nivel | fps | VRAM | 10 min de vídeo |
 |---|---|---|---|
 | Real-ESRGAN Compact | 63 | 51 MiB | ~5 min |
-| FlashVSR (difusión) | 2,1 | 19,1 GB | ~2 h 20 min |
+| FlashVSR (difusión) | 2,1 | 19,1 GB | ~2 h 23 min |
+
+Ambos verificados de punta a punta a través de oCabra. Compact: 150 s de vídeo
+en 97 s (0,65x el tiempo real). FlashVSR: 6 s en 88 s (~15x el tiempo real),
+que es la razón de que necesite una cola y no encaje en la UI síncrona para
+material largo.
 
 Medido de punta a punta a través de VHS: 150 s de vídeo tardaron 85 s (0,57x
 el tiempo real) con el nivel rápido.
