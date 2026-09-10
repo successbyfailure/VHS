@@ -1318,24 +1318,59 @@
         window.URL.revokeObjectURL(url);
       }
 
+      function describeApiError(payload) {
+        // El `detail` de FastAPI no siempre es texto: en los errores de
+        // validación es una lista de objetos y algunos servicios anidan
+        // {error:{message}}. Interpolarlo tal cual mostraba "[object Object]".
+        const detail = payload?.detail;
+        if (typeof detail === 'string' && detail) return detail;
+        if (Array.isArray(detail)) {
+          const parts = detail
+            .map((item) => {
+              const where = Array.isArray(item?.loc) ? item.loc.join('.') : '';
+              return [where, item?.msg].filter(Boolean).join(': ');
+            })
+            .filter(Boolean);
+          if (parts.length) return parts.join(' · ');
+        }
+        if (detail && typeof detail === 'object') {
+          const nested = detail.error?.message || detail.message;
+          if (typeof nested === 'string' && nested) return nested;
+          try {
+            return JSON.stringify(detail);
+          } catch {
+            /* cae al mensaje genérico */
+          }
+        }
+        return 'Error al preparar el archivo';
+      }
+
       async function downloadFromEndpoint(endpoint, options = {}) {
         const { statusTarget, progress, fetchOptions } = options;
         try {
           const method = (fetchOptions && fetchOptions.method) || 'POST';
           const message = method === 'GET' ? t('msg-connecting') : t('msg-sending');
           progress?.advance(message);
+          // Con FormData el Content-Type lo pone el navegador, incluido el
+          // boundary del multipart. Forzarlo a application/json rompía las tres
+          // subidas de archivo (ffmpeg, transcribir y escalado): el servidor
+          // recibía un cuerpo multipart etiquetado como JSON y respondía 422.
+          const isFormData =
+            typeof FormData !== 'undefined' && fetchOptions?.body instanceof FormData;
           const mergedOptions = {
             ...fetchOptions,
             headers: {
               ...(fetchOptions?.headers || {}),
               'X-VHS-Source': 'web',
-              ...(method !== 'GET' ? { 'Content-Type': 'application/json' } : {}),
+              ...(method !== 'GET' && !isFormData
+                ? { 'Content-Type': 'application/json' }
+                : {}),
             },
           };
           const response = await fetch(endpoint, mergedOptions);
           if (!response.ok) {
             const errorPayload = await response.json().catch(() => ({}));
-            throw new Error(errorPayload.detail || 'Error al preparar el archivo');
+            throw new Error(describeApiError(errorPayload));
           }
           progress?.advance(t('msg-downloading'));
           const blob = await response.blob();

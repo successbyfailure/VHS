@@ -746,6 +746,14 @@ UPSCALE_FORMATS = {
 for _name in UPSCALE_FORMATS:
     FORMAT_EXTENSIONS[_name] = ".mp4"
 
+# Extensiones de medios que se consideran "ya presentes" al construir el
+# nombre de descarga (ver build_download_name).
+KNOWN_MEDIA_EXTENSIONS = {
+    ".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4v", ".flv", ".wmv", ".ts",
+    ".mp3", ".ogg", ".oga", ".opus", ".wav", ".flac", ".aac", ".m4a", ".wma",
+    ".srt", ".vtt", ".json", ".txt",
+}
+
 TRANSCRIPTION_FILE_SUFFIX = ".transcript.json"
 
 
@@ -1169,6 +1177,13 @@ def build_download_name(title: str, file_path: Path, media_format: str) -> str:
     # Reemplazar múltiples espacios/guiones bajos consecutivos por uno solo
     safe = re.sub(r"[\s_]+", "_", safe).strip("._") or "vhs"
     extension = file_path.suffix or FORMAT_EXTENSIONS.get(media_format, ".bin")
+    # En las subidas el "título" es el nombre del fichero original, que ya trae
+    # extensión: sin esto la descarga salía como "video.mp4.mp3". Solo se quita
+    # si la extensión previa es una de medios conocidos, para no destrozar
+    # títulos legítimos como "Episodio 1.5".
+    previous = Path(safe).suffix.lower()
+    if previous and previous in KNOWN_MEDIA_EXTENSIONS:
+        safe = Path(safe).stem or safe
     return f"{safe}{extension}"
 
 

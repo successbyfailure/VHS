@@ -28,7 +28,19 @@ def test_parse_models_tolera_campos_ausentes():
     assert modelos[0]["label"] == "solo-id"
     assert modelos[0]["fps"] == 0.0
     assert modelos[1]["label"] == "Con etiqueta"
-    assert upscale.parse_models("") == []
+
+
+def test_parse_models_sin_configuracion_devuelve_vacio():
+    # Con la entrada vacía se recurre a UPSCALE_MODELS del entorno, así que hay
+    # que limpiarlo: importar vhs.main ejecuta load_dotenv() y lo rellenaría.
+    import os
+
+    previo = os.environ.pop("UPSCALE_MODELS", None)
+    try:
+        assert upscale.parse_models("") == []
+    finally:
+        if previo is not None:
+            os.environ["UPSCALE_MODELS"] = previo
 
 
 def test_parse_models_ignora_fps_no_numerico():
@@ -65,6 +77,20 @@ def test_endpoint_se_deriva_del_de_transcripcion(monkeypatch=None):
     finally:
         os.environ.clear()
         os.environ.update(previo)
+
+
+def test_build_download_name_no_duplica_extension():
+    """En las subidas el título es el nombre original, que ya trae extensión."""
+    from pathlib import Path as _P
+
+    from vhs.main import build_download_name
+
+    assert build_download_name("video.mp4", _P("out.mp3"), "ffmpeg_mp3-64") == "video.mp3"
+    assert build_download_name("clip.mp4", _P("out.mp4"), "upscale_1080") == "clip.mp4"
+    # Un título sin extensión no se toca.
+    assert build_download_name("Dale Acabado LISO", _P("o.srt"), "transcript_srt") == "Dale_Acabado_LISO.srt"
+    # Y un título que solo *parece* tener extensión tampoco.
+    assert build_download_name("Episodio 1.5", _P("o.mp4"), "upscale_1080") == "Episodio_1.5.mp4"
 
 
 if __name__ == "__main__":

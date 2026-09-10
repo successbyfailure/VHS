@@ -175,6 +175,7 @@ curl -X POST http://localhost:8601/api/download \
 **Error de transcripción**: Verificar que `TRANSCRIPTION_API_KEY` esté configurado
 **Modelo no permitido**: Revisar `TRANSCRIPTION_MODELS` o `DIARIZATION_MODELS` según el caso
 **Traducción del bot falla**: Verificar que `TRANSLATION_MODEL` sea compatible con chat
+**La subida de archivos desde la web falla con `[object Object]` o 422**: corregido en 0.4.1. El cliente forzaba `Content-Type: application/json` en todos los POST, lo que rompía el multipart de los tres formularios de subida (ffmpeg, transcribir y escalado)
 **YouTube bloquea descargas**: Ajustar `YTDLP_USER_AGENT` y `YTDLP_EXTRACTOR_ARGS`
 **El servicio se queda obsoleto**: `watchtower` ya viene activo en ambos ficheros compose (cada 5 min, solo contenedores con la etiqueta `watchtower.scope=vhs`). Comprueba que está vivo con `docker logs vhs-watchtower`. Ojo: watchtower despliega lo que haya en GHCR, así que una imagen construida en local y no publicada será reemplazada por la del registro
 **Dos peticiones idénticas a la vez**: desde 0.3.1 se serializan con un lock por clave de caché; la primera genera el fichero y el resto reutilizan su resultado. Si vuelves a ver `Unable to rename file ... .part`, el lock no se está aplicando a esa ruta
