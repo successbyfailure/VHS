@@ -353,10 +353,17 @@ partir de él, así que un número inventado produce una promesa falsa.
 
 ### Rendimiento medido (RTX 3090, salida 1080p)
 
-| nivel | fps | VRAM | 10 min de vídeo |
-|---|---|---|---|
-| Real-ESRGAN Compact | 63 | 51 MiB | ~5 min |
-| FlashVSR (difusión) | 2,1 | 19,1 GB | ~2 h 23 min |
+| nivel | fps | VRAM | 10 min de vídeo | calidad |
+|---|---|---|---|---|
+| Real-ESRGAN Compact | 53 | 394 MiB | ~6 min | limpia bordes, no añade textura |
+| Real-ESRGAN x4plus | 6,0 | 4,6 GB | ~50 min | detalle claramente mayor |
+| FlashVSR (difusión) | 2,1 | 19,1 GB | ~2 h 23 min | máxima textura |
+
+Los tres medidos en una RTX 3090 con salida 1080p. Compact está limitado por
+la tubería, no por la GPU, así que su cifra apenas cambia entre tarjetas; los
+otros dos sí son sensibles a ella. **x4plus rinde 2,53 fps en la 3060**, donde
+deja de tener sentido frente a FlashVSR, así que conviene fijarlo a la GPU
+grande con `preferred_gpu` en oCabra.
 
 Ambos verificados de punta a punta a través de oCabra. Compact: 150 s de vídeo
 en 97 s (0,65x el tiempo real). FlashVSR: 6 s en 88 s (~15x el tiempo real),
