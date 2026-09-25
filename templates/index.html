@@ -847,6 +847,7 @@
           progressDefault: ['Preparando solicitud…', 'Descargando archivo…', 'Completando descarga…'],
           progressTranscript: ['Preparando audio…', 'Solicitando transcripción…', 'Construyendo subtítulos…', 'Empaquetando archivo final…'],
           progressFfmpeg: ['Preparando archivo local…', 'Subiendo archivo…', 'Convirtiendo con ffmpeg…', 'Empaquetando descarga…'],
+          progressUpscale: ['Subiendo vídeo…', 'En cola…', 'Mejorando resolución en la GPU…', 'Empaquetando descarga…'],
           'msg-connecting': 'Conectando con el servidor…', 'msg-sending': 'Enviando solicitud…',
           'msg-downloading': 'Descargando datos…', 'msg-preparing-file': 'Listando archivo para descarga…',
           'msg-done-status': 'Descarga lista.', 'msg-done-progress': 'Archivo listo para guardar.',
@@ -872,6 +873,23 @@
           'lbl-transcriptions': 'Transcripciones', 'lbl-recodings': 'Recodificaciones ffmpeg',
           'lbl-avg': 'Media', 'lbl-p95': 'P95', 'lbl-served': 'Servidos', 'lbl-cache-saving': 'Ahorro caché',
           'lbl-last-days': (d, tot, api, web) => `Últimos ${d} días: ${tot} descargas (API: ${api} · Web: ${web})`,
+          'tab-upscale': 'Mejorar resolución',
+          'upscale-panel-title': 'Mejorar la resolución de un vídeo',
+          'upscale-panel-hint': 'Sube un vídeo y elige a qué resolución quieres llevarlo. La resolución se refiere al lado corto, así que funciona igual con vídeo horizontal y vertical. Si el vídeo ya tiene esa resolución o más, en lugar de rechazarlo se restaura: se reduce y se reconstruye, que es lo que mejora el material con resolución alta pero sin detalle real. El proceso usa la GPU y no es instantáneo: cada opción indica cuánto puede tardar.',
+          'label-upscale-target': 'Resolución objetivo',
+          'label-upscale-model': 'Calidad',
+          'btn-upscale': 'Mejorar resolución',
+          'upscale-queued': 'En cola',
+          'upscale-processing': 'Procesando',
+          'upscale-sending': 'Enviando…',
+          'upscale-ready': 'Listo, descargando…',
+          'upscale-estimated': 'estimado',
+          'upscale-elapsed': 'transcurrido',
+          'upscale-of-estimate': 'del tiempo estimado',
+          'upscale-queue-error': 'Error al encolar el trabajo',
+          'upscale-job-error': 'Error consultando el trabajo',
+          'upscale-unavailable-with': 'no disponible con',
+          'upscale-restore-warning': (px) => `El vídeo ya tiene ${px}px de lado corto: se restaurará (se reduce y se reconstruye). Útil si la calidad es mala; si el detalle es bueno, no gana nada.`,
           'lbl-from-cache': 'desde caché', 'lbl-in-cache': 'en caché',
           'locale': 'es-ES',
         },
@@ -909,6 +927,7 @@
           progressDefault: ['Preparing request…', 'Downloading file…', 'Completing download…'],
           progressTranscript: ['Preparing audio…', 'Requesting transcription…', 'Building subtitles…', 'Packaging final file…'],
           progressFfmpeg: ['Preparing local file…', 'Uploading file…', 'Converting with ffmpeg…', 'Packaging download…'],
+          progressUpscale: ['Uploading video…', 'Queued…', 'Upscaling on the GPU…', 'Packaging download…'],
           'msg-connecting': 'Connecting to server…', 'msg-sending': 'Sending request…',
           'msg-downloading': 'Downloading data…', 'msg-preparing-file': 'Preparing file for download…',
           'msg-done-status': 'Download ready.', 'msg-done-progress': 'File ready to save.',
@@ -935,6 +954,23 @@
           'lbl-avg': 'Avg', 'lbl-p95': 'P95', 'lbl-served': 'Served', 'lbl-cache-saving': 'Cache savings',
           'lbl-last-days': (d, tot, api, web) => `Last ${d} days: ${tot} downloads (API: ${api} · Web: ${web})`,
           'lbl-from-cache': 'from cache', 'lbl-in-cache': 'in cache',
+          'tab-upscale': 'Upscale',
+          'upscale-panel-title': 'Improve a video\u2019s resolution',
+          'upscale-panel-hint': 'Upload a video and pick the resolution you want. The resolution refers to the short side, so it works the same for landscape and portrait. If the video is already at that resolution or higher, it is restored instead of rejected: downscaled and rebuilt, which is what helps footage with a high nominal resolution but no real detail. This uses the GPU and is not instant: each option states how long it may take.',
+          'label-upscale-target': 'Target resolution',
+          'label-upscale-model': 'Quality',
+          'btn-upscale': 'Upscale',
+          'upscale-queued': 'Queued',
+          'upscale-processing': 'Processing',
+          'upscale-sending': 'Sending\u2026',
+          'upscale-ready': 'Done, downloading\u2026',
+          'upscale-estimated': 'estimated',
+          'upscale-elapsed': 'elapsed',
+          'upscale-of-estimate': 'of the estimated time',
+          'upscale-queue-error': 'Could not queue the job',
+          'upscale-job-error': 'Error checking the job',
+          'upscale-unavailable-with': 'unavailable with',
+          'upscale-restore-warning': (px) => `The video already has a ${px}px short side: it will be restored (downscaled and rebuilt). Useful if the quality is poor; if the detail is good, there is nothing to gain.`,
           'locale': 'en-US',
         },
       };
@@ -1242,6 +1278,7 @@
           default: t('progressDefault'),
           transcription: t('progressTranscript'),
           ffmpeg: t('progressFfmpeg'),
+          upscale: t('progressUpscale'),
         };
       }
 
@@ -1529,7 +1566,7 @@
           const blocked = limit > 0 && value > limit;
           option.disabled = blocked;
           option.textContent = option.textContent.replace(/ — no disponible.*$/, '');
-          if (blocked) option.textContent += ` — no disponible con ${selected.label}`;
+          if (blocked) option.textContent += ` — ${t('upscale-unavailable-with')} ${selected.label}`;
           else if (!firstEnabled) firstEnabled = option.value;
         });
         const current = upscaleTargetSelect?.selectedOptions?.[0];
@@ -1553,9 +1590,7 @@
           const shortSide = Math.min(video.videoWidth, video.videoHeight);
           URL.revokeObjectURL(video.src);
           if (shortSide && shortSide >= upscaleTargetValue()) {
-            upscaleStatusEl.textContent =
-              `El vídeo ya tiene ${shortSide}px de lado corto: se restaurará (se reduce y se ` +
-              'reconstruye). Útil si la calidad es mala; si el detalle es bueno, no gana nada.';
+            upscaleStatusEl.textContent = t('upscale-restore-warning')(shortSide);
           } else {
             upscaleStatusEl.textContent = '';
           }
@@ -1580,28 +1615,28 @@
           if (!response.ok) throw new Error(describeApiError(await response.json().catch(() => ({}))));
           const job = await response.json();
           const partes = [];
-          if (job.status === 'queued') partes.push('En cola');
+          if (job.status === 'queued') partes.push(t('upscale-queued'));
           if (job.status === 'running') {
             if (job.segments_total > 1) {
               const pct = Math.round((job.progress || 0) * 100);
-              partes.push(`Procesando ${job.segments_done}/${job.segments_total} (${pct}%)`);
+              partes.push(`${t('upscale-processing')} ${job.segments_done}/${job.segments_total} (${pct}%)`);
             } else if (job.estimate_seconds > 0) {
               // Con un solo segmento no hay granularidad real, así que se
               // muestra el avance sobre la estimación y se dice que lo es:
               // una barra clavada en 0% durante minutos parece que está roto.
               const pct = Math.min(99, Math.round((job.elapsed_seconds / job.estimate_seconds) * 100));
-              partes.push(`Procesando (~${pct}% del tiempo estimado)`);
+              partes.push(`${t('upscale-processing')} (~${pct}% ${t('upscale-of-estimate')})`);
             } else {
-              partes.push('Procesando');
+              partes.push(t('upscale-processing'));
             }
           }
-          if (job.estimate_human && job.status !== 'done') partes.push(`estimado ${job.estimate_human}`);
-          if (job.elapsed_seconds) partes.push(`transcurrido ${Math.round(job.elapsed_seconds)}s`);
+          if (job.estimate_human && job.status !== 'done') partes.push(`${t('upscale-estimated')} ${job.estimate_human}`);
+          if (job.elapsed_seconds) partes.push(`${t('upscale-elapsed')} ${Math.round(job.elapsed_seconds)}s`);
           upscaleStatusEl.textContent = partes.join(' · ') || job.status;
 
           if (job.status === 'done') {
             stopUpscalePolling();
-            upscaleStatusEl.textContent = 'Listo, descargando…';
+            upscaleStatusEl.textContent = t('upscale-ready');
             await downloadFromEndpoint(`/api/upscale/jobs/${jobId}/download`, {
               statusTarget: upscaleStatusEl,
               progress: upscaleProgress,
@@ -1614,7 +1649,7 @@
           }
         } catch (error) {
           stopUpscalePolling();
-          upscaleStatusEl.textContent = error.message || 'Error consultando el trabajo';
+          upscaleStatusEl.textContent = error.message || t('upscale-job-error');
         }
       }
 
@@ -1630,8 +1665,8 @@
         formData.append('upscale_model', upscaleModelSelect?.value || '');
         stopUpscalePolling();
         upscaleProgress.reset();
-        upscaleProgress.start(getProgressSteps().ffmpeg);
-        upscaleStatusEl.textContent = 'Enviando…';
+        upscaleProgress.start(getProgressSteps().upscale);
+        upscaleStatusEl.textContent = t('upscale-sending');
         try {
           // Se encola en vez de esperar en la petición: el nivel de difusión
           // tarda horas y ninguna conexión HTTP aguanta eso.
@@ -1639,13 +1674,13 @@
           const payload = await response.json().catch(() => ({}));
           if (!response.ok) throw new Error(describeApiError(payload));
           upscaleStatusEl.textContent = payload.estimate_human
-            ? `En cola · estimado ${payload.estimate_human}`
-            : 'En cola';
+            ? `${t('upscale-queued')} · ${t('upscale-estimated')} ${payload.estimate_human}`
+            : t('upscale-queued');
           upscalePollTimer = setInterval(() => pollUpscaleJob(payload.id), 4000);
           pollUpscaleJob(payload.id);
         } catch (error) {
           upscaleProgress.reset();
-          upscaleStatusEl.textContent = error.message || 'Error al encolar el trabajo';
+          upscaleStatusEl.textContent = error.message || t('upscale-queue-error');
         }
       });
 
