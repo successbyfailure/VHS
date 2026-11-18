@@ -1,4 +1,4 @@
-FROM nvidia/cuda:13.0.3-runtime-ubuntu24.04
+FROM nvidia/cuda:13.5.0-runtime-ubuntu24.04
 
 # Ubuntu 24.04 marca el Python del sistema como "externally managed" (PEP 668),
 # así que las dependencias van en un virtualenv propio.
