@@ -67,6 +67,10 @@ def test_fallback_uno_a_uno_conserva_el_orden():
     original_openai = main.OpenAI
     original_batch = main.TRANSLATION_BATCH_SIZE
     original_conc = main.TRANSLATION_CONCURRENCY
+    # La clave real no hace falta (el cliente es falso), pero sin ella la
+    # función aborta antes de traducir y el test dependería del entorno.
+    original_key = main.TRANSCRIPTION_API_KEY
+    main.TRANSCRIPTION_API_KEY = original_key or "clave-de-prueba"
     main.OpenAI = lambda **_kwargs: cliente
     main.TRANSLATION_BATCH_SIZE = 3
     main.TRANSLATION_CONCURRENCY = 1
@@ -77,6 +81,7 @@ def test_fallback_uno_a_uno_conserva_el_orden():
         main.OpenAI = original_openai
         main.TRANSLATION_BATCH_SIZE = original_batch
         main.TRANSLATION_CONCURRENCY = original_conc
+        main.TRANSCRIPTION_API_KEY = original_key
     assert salida == ["uno", "dos", "tres"], salida
     assert len(cliente.peticiones) == 4, cliente.peticiones
 
