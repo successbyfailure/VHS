@@ -854,6 +854,7 @@
           'jobs-hint': 'Puedes cerrar esta página y volver más tarde. Los resultados se conservan durante 24 horas.',
           'jobs-empty': 'Todavía no tienes trabajos.',
           'jobs-download': 'Descargar', 'jobs-cancel': 'Cancelar', 'jobs-delete': 'Eliminar',
+          'jobs-retry': 'Reintentar',
           'jobs-created': 'Trabajo creado. Puedes seguirlo en «Mis trabajos».',
           'jobs-error': 'No se pudieron consultar los trabajos.',
           'label-transcription-model': 'Modelo de transcripción',
@@ -940,6 +941,7 @@
           'jobs-hint': 'You can close this page and return later. Results are kept for 24 hours.',
           'jobs-empty': 'You do not have any jobs yet.',
           'jobs-download': 'Download', 'jobs-cancel': 'Cancel', 'jobs-delete': 'Delete',
+          'jobs-retry': 'Retry',
           'jobs-created': 'Job created. You can follow it under “My jobs”.',
           'jobs-error': 'Could not retrieve jobs.',
           'label-transcription-model': 'Transcription model',
@@ -1881,6 +1883,13 @@
         return phase?.[currentLang] || job.status;
       }
 
+      async function retryJob(job) {
+        const response = await fetch(`/api/jobs/${job.id}/retry`, { method: 'POST' });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.detail || t('jobs-error'));
+        await loadJobsPanel();
+      }
+
       async function removeJob(job) {
         const response = await fetch(`/api/jobs/${job.id}`, { method: 'DELETE' });
         const payload = await response.json().catch(() => ({}));
@@ -1937,6 +1946,15 @@
             download.textContent = t('jobs-download');
             download.addEventListener('click', () => downloadFromEndpoint(`/api/jobs/${job.id}/download`, { statusTarget: jobsStatus }));
             actions.appendChild(download);
+          }
+          if (job.kind === 'transcription_batch' && ['error', 'cancelled'].includes(job.status)) {
+            const retry = document.createElement('button');
+            retry.className = 'ghost-button';
+            retry.textContent = t('jobs-retry');
+            retry.addEventListener('click', async () => {
+              try { await retryJob(job); } catch (error) { jobsStatus.textContent = error.message; }
+            });
+            actions.appendChild(retry);
           }
           const remove = document.createElement('button');
           remove.className = 'ghost-button danger';

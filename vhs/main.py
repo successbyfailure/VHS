@@ -1268,6 +1268,53 @@ def _apply_translation_batch(
     return payload
 
 
+# Fase a la que hay que retroceder si el lote de esa fase ya no sirve.
+_BATCH_STAGES = ["prepare", "transcribing", "transcribed", "translating", "translated"]
+_BATCH_RETRY_STAGES = {
+    "transcription_batch_id": "prepare",
+    "translation_batch_id": "transcribed",
+}
+
+
+def reset_batch_job_for_retry(params: Dict[str, Any]) -> List[str]:
+    """Descarta los lotes que ya no sirven para poder reintentar el trabajo.
+
+    Un lote que acabó cancelado o caducado no se puede volver a consultar: el
+    trabajo se quedaba esperando un lote inexistente. Los que terminaron bien
+    se conservan, así el reintento no repite trabajo ya pagado. Devuelve las
+    fases que habrá que rehacer.
+    """
+    try:
+        client = create_openai_client()
+    except Exception:  # pragma: no cover - sin configuración no hay nada que mirar
+        client = None
+    rehacer: List[str] = []
+    objetivo: Optional[str] = None
+    for clave, stage in _BATCH_RETRY_STAGES.items():
+        batch_id = params.get(clave)
+        if not batch_id:
+            continue
+        estado = None
+        if client is not None:
+            try:
+                estado = client.batches.retrieve(batch_id).status
+            except Exception:
+                estado = None
+        if estado == "completed":
+            continue
+        params.pop(clave, None)
+        rehacer.append(clave)
+        # Se retrocede a la fase más temprana que haya que rehacer.
+        if objetivo is None or _BATCH_STAGES.index(stage) < _BATCH_STAGES.index(objetivo):
+            objetivo = stage
+    if objetivo is not None:
+        params["stage"] = objetivo
+    if rehacer:
+        _clear_batch_live_status(params)
+        params.pop("phase", None)
+    return rehacer
+
+
 def _prepare_batch_audio(params: Dict[str, Any], workdir: Path) -> Tuple[Path, str]:
     if params.get("url"):
         downloaded, metadata = download_media(params["url"], "audio_med")
@@ -4239,6 +4286,35 @@ async def job_cancel_or_delete(request: Request, job_id: str):
     job.params["phase"] = "cancelling"
     _job_store.persist(job)
     return {"status": "cancelling"}
+
+
+@app.post("/api/jobs/{job_id}/retry", response_class=JSONResponse)
+async def job_retry(request: Request, job_id: str):
+    """Vuelve a encolar un trabajo que falló, sin repetir lo ya terminado.
+
+    Hacía falta porque un lote cancelado o caducado en oCabra dejaba el trabajo
+    muerto: no había forma de reintentarlo y la única salida era borrarlo y
+    volver a crearlo desde cero.
+    """
+    job = _owned_job(request, job_id)
+    if job.kind != "transcription_batch":
+        raise HTTPException(
+            status_code=400, detail="Solo se pueden reintentar las transcripciones por lotes"
+        )
+    if job.status not in {jobs_mod.STATUS_ERROR, jobs_mod.STATUS_CANCELLED}:
+        raise HTTPException(
+            status_code=409,
+            detail="Solo se reintentan los trabajos con error o cancelados",
+        )
+    rehacer = await run_in_threadpool(reset_batch_job_for_retry, job.params)
+    job.status = jobs_mod.STATUS_QUEUED
+    job.error = None
+    job.started_at = None
+    job.finished_at = None
+    job.cancel_requested = False
+    job.segments_done = 0
+    _batch_job_queue.submit(job)
+    return {"status": "queued", "resend": rehacer}
 
 
 @app.get("/api/upscale/models", response_class=JSONResponse)

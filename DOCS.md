@@ -404,6 +404,13 @@ línea mal formada hace que `POST /v1/batches` rechace el lote entero con un 400
 que lista hasta 20 errores en `error.errors`, cada uno con `line`, `code` y
 `message`; esos errores no llegan a `error_file_id`.
 
+Si un lote acaba cancelado o caducado, el trabajo queda en error: el lote ya no
+se puede consultar y esperarlo sería esperar para siempre. `POST
+/api/jobs/{id}/retry` (botón «Reintentar» en el portal) lo vuelve a encolar
+comprobando antes en oCabra qué lotes siguen sirviendo: los que terminaron bien
+se conservan y solo se reenvían los que hagan falta, retrocediendo la fase lo
+mínimo. Antes la única salida era borrar el trabajo y crearlo de cero.
+
 Los identificadores externos se guardan con el trabajo. Tras reiniciar VHS, el
 servidor vuelve a consultar esos lotes en lugar de repetirlos. Cuando termina,
 VHS copia el resultado a su almacenamiento y elimina los ficheros remotos de

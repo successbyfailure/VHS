@@ -121,9 +121,21 @@ por su propietario y devuelven `404` para trabajos de otra sesión.
 - `GET /api/jobs/{id}`: estado y progreso.
 - `GET /api/jobs/{id}/download`: descarga el resultado terminado.
 - `DELETE /api/jobs/{id}`: cancela un trabajo activo o elimina uno terminado.
+- `POST /api/jobs/{id}/retry`: vuelve a encolar un trabajo con `error` o
+  `cancelled`. Comprueba en oCabra el estado de los lotes que tenía: conserva
+  los que terminaron bien y descarta los cancelados, caducados o que ya no se
+  pueden consultar, de modo que solo se repite la fase necesaria. Devuelve
+  `{"status": "queued", "resend": [...]}` con los lotes que se reenviarán.
+  Responde `409` si el trabajo no está en error o cancelado y `400` si no es
+  una transcripción por lotes.
 
 Los estados incluyen `queued`, `running`, `done`, `error` y `cancelled`;
 `phase` detalla `preparing`, `transcribing`, `translating` o `ready`.
+
+Mientras un lote está en curso, el estado añade lo que oCabra informa de él:
+`live_phase` (`queued`, `loading_model`, `running`, `waiting_for_vram`…),
+`detail` con una frase lista para mostrar, `queue_position`,
+`expected_wait_seconds` y el par `batch_completed` / `batch_total`.
 
 ## Notas sobre metadatos
 
