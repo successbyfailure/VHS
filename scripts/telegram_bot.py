@@ -24,6 +24,11 @@ from telegram.ext import (
 from vhs.main import (
     CACHE_DIR,
     FFMPEG_PRESETS,
+    OCABRA_EXTENSIONS,
+    OPENAI_MAX_RETRIES,
+    OPENAI_TIMEOUT_SECONDS,
+    TRANSCRIPTION_API_KEY,
+    TRANSCRIPTION_ENDPOINT,
     YTDLP_CACHE_DIR,
     download_media,
     ensure_storage_ready,
@@ -41,6 +46,9 @@ TELEGRAM_AUTH_FILE = Path(os.getenv("TELEGRAM_AUTH_FILE", "data/telegram_auth.js
 # El resumen sale del mismo endpoint que la transcripción, así que por defecto
 # reutiliza el modelo de chat ya configurado para traducir.
 SUMMARY_MODEL = os.getenv("SUMMARY_MODEL") or os.getenv("TRANSLATION_MODEL") or "gpt-4o-mini"
+# 256 sobra: los resúmenes medidos salen en torno a 140 tokens.
+SUMMARY_MAX_TOKENS = max(1, int(os.getenv("SUMMARY_MAX_TOKENS", "256")))
+SUMMARY_REASONING_EFFORT = os.getenv("SUMMARY_REASONING_EFFORT", "").strip()
 
 MENU_OPTIONS = ["Descargar", "Transcribir", "Traducir", "Resumir"]
 
@@ -118,24 +126,51 @@ async def handle_approval_callback(update: Update, context: ContextTypes.DEFAULT
 
 
 async def summarize_text(text: str) -> str:
-    api_key = os.getenv("TRANSCRIPTION_API_KEY")
-    if not api_key:
+    if not TRANSCRIPTION_API_KEY:
         return "No hay API key configurada para resumir."
     # Sin base_url el SDK apunta a api.openai.com y la clave del endpoint
     # propio se rechaza; hay que reutilizar el mismo endpoint que la STT.
     client = OpenAI(
-        api_key=api_key,
-        base_url=os.getenv("TRANSCRIPTION_ENDPOINT", "https://api.openai.com/v1"),
+        api_key=TRANSCRIPTION_API_KEY,
+        base_url=TRANSCRIPTION_ENDPOINT,
+        max_retries=OPENAI_MAX_RETRIES,
+        timeout=OPENAI_TIMEOUT_SECONDS,
     )
-    prompt = (
-        "Resume en español el siguiente contenido en 3-4 frases claras:\n\n"
-        f"{text[:6000]}"
+    # Las instrucciones van en un mensaje de sistema: con todo en el mensaje de
+    # usuario, el modelo contestaba "Aquí tienes el resumen en 4 frases:" antes
+    # del resumen, y esa coletilla acababa en el chat.
+    system = (
+        "Eres un asistente que resume transcripciones de audio en español de España. "
+        "Devuelve SOLO el resumen, sin preámbulos, sin titulares, sin Markdown y sin "
+        "mencionar que es una transcripción. No inventes datos que no estén en el texto."
     )
-    completion = client.chat.completions.create(
-        model=SUMMARY_MODEL,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    return completion.choices[0].message.content.strip()
+    request: Dict[str, Any] = {
+        "model": SUMMARY_MODEL,
+        "messages": [
+            {"role": "system", "content": system},
+            {
+                "role": "user",
+                "content": "Resume el siguiente contenido en 3-4 frases claras:\n\n"
+                f"{text[:6000]}",
+            },
+        ],
+        "max_tokens": SUMMARY_MAX_TOKENS,
+    }
+    if OCABRA_EXTENSIONS and SUMMARY_REASONING_EFFORT:
+        request["extra_body"] = {"reasoning_effort": SUMMARY_REASONING_EFFORT}
+    completion = client.chat.completions.create(**request)
+    choice = completion.choices[0]
+    resumen = (choice.message.content or "").strip()
+    if not resumen:
+        # oCabra avisa de que "length" sin contenido significa que el
+        # presupuesto se gastó razonando antes de escribir la respuesta.
+        if getattr(choice, "finish_reason", None) == "length":
+            return (
+                "El modelo agotó su presupuesto de tokens sin escribir el resumen. "
+                "Sube SUMMARY_MAX_TOKENS o pon SUMMARY_REASONING_EFFORT=off."
+            )
+        return "El modelo no devolvió ningún resumen."
+    return resumen
 
 
 async def send_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, payload: Dict[str, Any]) -> None:

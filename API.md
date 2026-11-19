@@ -108,6 +108,23 @@ Body JSON:
 - `GET /api/stats/usage`: totales por día (descargas, ffmpeg, transcripciones, palabras/tokens, errores) y top de formatos.
 - `GET /api/health`: responde `{ "status": "ok" }` (incluye versión si está configurada).
 
+### Trabajos persistentes
+
+El portal utiliza una cookie anónima `HttpOnly`; todos estos endpoints filtran
+por su propietario y devuelven `404` para trabajos de otra sesión.
+
+- `POST /api/jobs/transcription/url`: crea un trabajo Batch desde JSON con
+  `url`, `format`, `transcription_model` y `diarize` opcionales.
+- `POST /api/jobs/transcription/upload`: crea un trabajo Batch multipart con
+  `file`, `media_format`, `transcription_model` y `diarize`.
+- `GET /api/jobs`: trabajos de la sesión actual y su TTL.
+- `GET /api/jobs/{id}`: estado y progreso.
+- `GET /api/jobs/{id}/download`: descarga el resultado terminado.
+- `DELETE /api/jobs/{id}`: cancela un trabajo activo o elimina uno terminado.
+
+Los estados incluyen `queued`, `running`, `done`, `error` y `cancelled`;
+`phase` detalla `preparing`, `transcribing`, `translating` o `ready`.
+
 ## Notas sobre metadatos
 
 - Todos los archivos escritos en caché incluyen los campos de resolución, bitrates y `format_id` cuando están disponibles.

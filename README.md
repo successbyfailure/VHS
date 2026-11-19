@@ -1,6 +1,6 @@
 # VHS · Video Harvester Service
 
-**Versión**: 0.5.5
+**Versión**: 0.5.11
 
 Servicio FastAPI que descarga, convierte y transcribe vídeos o audios mediante `yt-dlp` y perfiles rápidos de `ffmpeg`. Este directorio está listo para vivir como repositorio independiente y generar su propia imagen de Docker.
 
@@ -19,7 +19,8 @@ Copia `example.env` a `.env` y ajusta las rutas o claves necesarias:
 cp example.env .env
 ```
 
-Las variables más relevantes son `CACHE_DIR`, `USAGE_LOG_PATH` y las opciones de `TRANSCRIPTION_*`/`DIARIZATION_*`.
+Las variables más relevantes son `CACHE_DIR`, `USAGE_LOG_PATH`,
+`JOB_TTL_SECONDS` y las opciones de `TRANSCRIPTION_*`/`DIARIZATION_*`.
 
 Para evitar bloqueos de YouTube es posible ajustar:
 
@@ -46,7 +47,10 @@ docker build -t ghcr.io/successbyfailure/vhs:latest -f Dockerfile .
 docker run --env-file .env -p 8601:8601 ghcr.io/successbyfailure/vhs:latest
 ```
 
-El contenedor expone `/api/health`, `/api/probe`, `/api/download`, `/api/cache`, `/api/transcribe/upload` y `/api/ffmpeg/upload`.
+El contenedor expone `/api/health`, `/api/probe`, `/api/download`, `/api/cache`,
+`/api/jobs`, `/api/jobs/transcription/*` y `/api/ffmpeg/upload`. Las
+transcripciones del portal se procesan como trabajos Batch asociados a una
+sesión anónima del navegador y se pueden descargar al volver más tarde.
 
 ### Imagen con soporte NVIDIA (GPU)
 

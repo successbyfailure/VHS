@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
@@ -29,7 +30,7 @@ from fastapi.concurrency import run_in_threadpool
 
 # Los trabajos terminados se conservan este tiempo para que el cliente pueda
 # recoger el resultado aunque cierre la pestaña y vuelva más tarde.
-JOB_TTL_SECONDS = 24 * 3600
+JOB_TTL_SECONDS = max(3600, int(os.getenv("JOB_TTL_SECONDS", str(24 * 3600))))
 
 STATUS_QUEUED = "queued"
 STATUS_RUNNING = "running"
@@ -43,6 +44,7 @@ TERMINAL_STATUSES = {STATUS_DONE, STATUS_ERROR, STATUS_CANCELLED}
 class Job:
     id: str
     kind: str
+    owner_id: str = ""
     status: str = STATUS_QUEUED
     created_at: float = field(default_factory=time.time)
     started_at: Optional[float] = None
@@ -62,6 +64,17 @@ class Job:
         data = asdict(self)
         data.pop("result_path", None)
         data.pop("cancel_requested", None)
+        data.pop("owner_id", None)
+        params = data.pop("params", {})
+        data["phase"] = params.get("phase", "")
+        # Estado vivo del lote en oCabra: explica por qué un trabajo lleva un
+        # minuto sin avanzar (normalmente, cargando el modelo o en cola).
+        data["live_phase"] = params.get("live_phase", "")
+        data["detail"] = params.get("live_detail", "")
+        data["queue_position"] = params.get("queue_position")
+        data["expected_wait_seconds"] = params.get("batch_wait_seconds")
+        data["batch_completed"] = params.get("batch_completed") or 0
+        data["batch_total"] = params.get("batch_total") or 0
         elapsed = (self.finished_at or time.time()) - (self.started_at or self.created_at)
         data["elapsed_seconds"] = round(max(0.0, elapsed), 1)
         if self.segments_total:
@@ -91,12 +104,17 @@ class JobStore:
                 job = Job(**data)
             except (OSError, TypeError, ValueError, json.JSONDecodeError):
                 continue
-            # Un trabajo que estaba en marcha cuando el proceso murió no puede
-            # reanudarse: se marca como error en vez de dejarlo colgado.
+            # Los batches externos conservan su estado en oCabra y sí se
+            # pueden reanudar. Los ejecutores locales no tienen esa garantía.
             if job.status in {STATUS_QUEUED, STATUS_RUNNING}:
-                job.status = STATUS_ERROR
-                job.error = "El servicio se reinició mientras el trabajo estaba en curso"
-                job.finished_at = time.time()
+                if job.kind == "transcription_batch":
+                    job.status = STATUS_QUEUED
+                    job.started_at = None
+                    job.error = None
+                else:
+                    job.status = STATUS_ERROR
+                    job.error = "El servicio se reinició mientras el trabajo estaba en curso"
+                    job.finished_at = time.time()
             self._jobs[job.id] = job
 
     def persist(self, job: Job) -> None:
@@ -114,8 +132,22 @@ class JobStore:
     def get(self, job_id: str) -> Optional[Job]:
         return self._jobs.get(job_id)
 
-    def list(self, limit: int = 50) -> list[Job]:
-        return sorted(self._jobs.values(), key=lambda j: j.created_at, reverse=True)[:limit]
+    def remove(self, job_id: str, cleanup: Callable[[Path], None]) -> bool:
+        job = self._jobs.pop(job_id, None)
+        if job is None:
+            return False
+        if job.result_path:
+            cleanup(Path(job.result_path).parent)
+        elif job.params.get("workdir"):
+            cleanup(Path(job.params["workdir"]))
+        self._path(job_id).unlink(missing_ok=True)
+        return True
+
+    def list(self, limit: int = 50, owner_id: Optional[str] = None) -> list[Job]:
+        items = self._jobs.values()
+        if owner_id is not None:
+            items = (job for job in items if job.owner_id == owner_id)
+        return sorted(items, key=lambda j: j.created_at, reverse=True)[:limit]
 
     def purge_expired(self, cleanup: Callable[[Path], None]) -> int:
         removed = 0
@@ -127,6 +159,8 @@ class JobStore:
                 continue
             if job.result_path:
                 cleanup(Path(job.result_path).parent)
+            elif job.params.get("workdir"):
+                cleanup(Path(job.params["workdir"]))
             self._path(job.id).unlink(missing_ok=True)
             self._jobs.pop(job.id, None)
             removed += 1
@@ -136,10 +170,11 @@ class JobStore:
 class JobQueue:
     """Ejecuta los trabajos de uno en uno, con el trabajador arrancado en caliente."""
 
-    def __init__(self, store: JobStore) -> None:
+    def __init__(self, store: JobStore, *, concurrency: int = 1) -> None:
         self.store = store
         self._queue: asyncio.Queue[str] = asyncio.Queue()
-        self._task: Optional[asyncio.Task] = None
+        self.concurrency = max(1, concurrency)
+        self._tasks: set[asyncio.Task] = set()
         self._runners: Dict[str, Callable[..., Any]] = {}
 
     def register(self, kind: str, runner: Callable[..., Any]) -> None:
@@ -150,11 +185,24 @@ class JobQueue:
         self._queue.put_nowait(job.id)
         self._ensure_worker()
 
+    def resume_pending(self) -> int:
+        """Reencola batches recuperados del disco tras un reinicio."""
+        pending = [
+            job for job in self.store.list(limit=10000)
+            if job.status == STATUS_QUEUED and job.kind in self._runners
+        ]
+        for job in pending:
+            self._queue.put_nowait(job.id)
+        if pending:
+            self._ensure_worker()
+        return len(pending)
+
     def _ensure_worker(self) -> None:
-        # Arranque perezoso: VHS no tiene hooks de arranque y así se evita
-        # tocar la construcción de la app solo por esto.
-        if self._task is None or self._task.done():
-            self._task = asyncio.create_task(self._worker(), name="vhs-job-worker")
+        self._tasks = {task for task in self._tasks if not task.done()}
+        wanted = min(self.concurrency, max(1, self._queue.qsize()))
+        while len(self._tasks) < wanted:
+            task = asyncio.create_task(self._worker(), name="vhs-job-worker")
+            self._tasks.add(task)
 
     def pending(self) -> int:
         return self._queue.qsize()
@@ -202,8 +250,12 @@ class JobQueue:
                 runner, job.params, on_progress, should_cancel
             )
         except Exception as exc:  # el ejecutor decide qué es recuperable
-            job.status = STATUS_ERROR
-            job.error = str(exc)
+            if job.cancel_requested:
+                job.status = STATUS_CANCELLED
+                job.error = None
+            else:
+                job.status = STATUS_ERROR
+                job.error = str(exc)
         else:
             if job.cancel_requested:
                 job.status = STATUS_CANCELLED
@@ -216,10 +268,17 @@ class JobQueue:
         self.store.persist(job)
 
 
-def new_job(kind: str, params: Dict[str, Any], *, estimate_seconds: float = 0.0) -> Job:
+def new_job(
+    kind: str,
+    params: Dict[str, Any],
+    *,
+    estimate_seconds: float = 0.0,
+    owner_id: str = "",
+) -> Job:
     return Job(
         id=uuid.uuid4().hex[:16],
         kind=kind,
+        owner_id=owner_id,
         params=params,
         estimate_seconds=round(estimate_seconds, 1),
     )

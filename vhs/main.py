@@ -1,8 +1,10 @@
 import hashlib
 import json
+import math
 import os
 import random
 import re
+import secrets
 import unicodedata
 import shutil
 import subprocess
@@ -11,7 +13,7 @@ import tempfile
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -98,10 +100,58 @@ else:
     YTDLP_EXTRACTOR_ARGS = {"youtube": ["player_client=default"]}
 TRANSCRIPTION_ENDPOINT = os.getenv("TRANSCRIPTION_ENDPOINT", "https://api.openai.com/v1")
 TRANSCRIPTION_API_KEY = os.getenv("TRANSCRIPTION_API_KEY")
+OPENAI_TIMEOUT_SECONDS = max(1.0, float(os.getenv("OPENAI_TIMEOUT_SECONDS", "900")))
+OPENAI_MAX_RETRIES = max(0, int(os.getenv("OPENAI_MAX_RETRIES", "3")))
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+# Las extensiones se activan explícitamente para no enviar campos propios de
+# oCabra a api.openai.com ni a otros proveedores compatibles.
+OCABRA_EXTENSIONS = _env_flag("OCABRA_EXTENSIONS")
+TRANSCRIPTION_VAD_FILTER = _env_flag("TRANSCRIPTION_VAD_FILTER", True)
+TRANSCRIPTION_CONDITION_ON_PREVIOUS_TEXT = _env_flag(
+    "TRANSCRIPTION_CONDITION_ON_PREVIOUS_TEXT"
+)
+# Subtítulos: los segmentos de Whisper llegan a 20 s y más de 250 caracteres,
+# que ningún reproductor muestra bien. Se trocean a la norma habitual de
+# subtitulado (dos líneas de 42 caracteres).
+SRT_SPLIT_CUES = _env_flag("SRT_SPLIT_CUES", True)
+# Con marcas de tiempo por palabra los subtítulos se cortan en las pausas
+# reales del audio en vez de repartir el tiempo del segmento a prorrata.
+# `timestamp_granularities` es campo estándar, pero se puede desactivar si el
+# backend elegido no lo sirve.
+TRANSCRIPTION_WORD_TIMESTAMPS = _env_flag("TRANSCRIPTION_WORD_TIMESTAMPS", True)
+SRT_MAX_LINE_CHARS = max(20, int(os.getenv("SRT_MAX_LINE_CHARS", "42")))
+SRT_MAX_LINES = max(1, int(os.getenv("SRT_MAX_LINES", "2")))
+SRT_MIN_CUE_SECONDS = max(0.0, float(os.getenv("SRT_MIN_CUE_SECONDS", "1.0")))
+# Separación entre subtítulos consecutivos y cuánto se puede alargar uno para
+# aprovechar el silencio que viene detrás.
+SRT_CUE_GAP_SECONDS = max(0.0, float(os.getenv("SRT_CUE_GAP_SECONDS", "0.08")))
+SRT_CUE_MAX_EXTENSION = max(0.0, float(os.getenv("SRT_CUE_MAX_EXTENSION", "2.0")))
+# Cuánto se estima que crece el texto al traducirlo al español. Medido en el
+# vídeo de pruebas: 1,06x de media, con picos por subtítulo bastante mayores.
+TRANSLATION_EXPANSION = max(1.0, float(os.getenv("TRANSLATION_EXPANSION", "1.18")))
+
 _TRANSCRIPTION_MODEL_RAW = os.getenv("TRANSCRIPTION_MODEL", "gpt-4o-mini-transcribe").strip()
 _TRANSCRIPTION_MODELS_RAW = os.getenv("TRANSCRIPTION_MODELS", "").strip()
 _DIARIZATION_MODEL_RAW = os.getenv("DIARIZATION_MODEL", "").strip()
 _DIARIZATION_MODELS_RAW = os.getenv("DIARIZATION_MODELS", "").strip()
+
+
+def create_openai_client() -> OpenAI:
+    """Cliente compartido con reintentos y margen para arranques en frío."""
+    return OpenAI(
+        api_key=TRANSCRIPTION_API_KEY,
+        base_url=TRANSCRIPTION_ENDPOINT,
+        max_retries=OPENAI_MAX_RETRIES,
+        timeout=OPENAI_TIMEOUT_SECONDS,
+    )
 
 
 def _legacy_transcription_aliases(model_id: str) -> List[str]:
@@ -651,9 +701,46 @@ for preset_name, preset in FFMPEG_PRESETS.items():
         {"name": preset_name, "description": preset["description"]}
     )
 
-app = FastAPI(title=APP_TITLE)
+@asynccontextmanager
+async def app_lifespan(_app: FastAPI):
+    # La cola existe al arrancar el servidor aunque se declare más abajo en el
+    # módulo; para entonces la importación ya ha terminado por completo.
+    _batch_job_queue.resume_pending()
+    yield
+
+
+app = FastAPI(title=APP_TITLE, lifespan=app_lifespan)
 templates = Jinja2Templates(directory="templates")
 app.mount("/assets", StaticFiles(directory="assets"), name="assets")
+
+SESSION_COOKIE_NAME = os.getenv("SESSION_COOKIE_NAME", "vhs_session")
+SESSION_COOKIE_MAX_AGE = max(
+    jobs_mod.JOB_TTL_SECONDS,
+    int(os.getenv("SESSION_COOKIE_MAX_AGE", str(30 * 24 * 3600))),
+)
+_SESSION_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{32,128}$")
+
+
+@app.middleware("http")
+async def anonymous_session(request: Request, call_next):
+    """Asigna una identidad anónima estable sin exponerla en los trabajos."""
+    token = request.cookies.get(SESSION_COOKIE_NAME, "")
+    created = not _SESSION_TOKEN_RE.fullmatch(token)
+    if created:
+        token = secrets.token_urlsafe(32)
+    request.state.owner_id = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    response = await call_next(request)
+    if created:
+        forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",", 1)[0]
+        response.set_cookie(
+            SESSION_COOKIE_NAME,
+            token,
+            max_age=SESSION_COOKIE_MAX_AGE,
+            httponly=True,
+            secure=request.url.scheme == "https" or forwarded_proto == "https",
+            samesite="lax",
+        )
+    return response
 
 
 def template_context(request: Request, **kwargs: Any) -> Dict[str, Any]:
@@ -755,9 +842,19 @@ KNOWN_MEDIA_EXTENSIONS = {
     ".srt", ".vtt", ".json", ".txt",
 }
 
-UPSCALE_JOBS_DIR = Path(os.getenv("UPSCALE_JOBS_DIR", str(CACHE_DIR.parent / "upscale_jobs")))
-_job_store = jobs_mod.JobStore(UPSCALE_JOBS_DIR)
+JOBS_DIR = Path(
+    os.getenv(
+        "JOBS_DIR",
+        os.getenv("UPSCALE_JOBS_DIR", str(CACHE_DIR.parent / "upscale_jobs")),
+    )
+)
+_job_store = jobs_mod.JobStore(JOBS_DIR)
 _job_queue = jobs_mod.JobQueue(_job_store)
+_batch_job_queue = jobs_mod.JobQueue(
+    _job_store,
+    concurrency=max(1, int(os.getenv("BATCH_JOB_CONCURRENCY", "4"))),
+)
+BATCH_POLL_SECONDS = max(1.0, float(os.getenv("BATCH_POLL_SECONDS", "2")))
 
 
 def _run_upscale_job(params: Dict, on_progress, should_cancel) -> Dict:
@@ -776,6 +873,7 @@ def _run_upscale_job(params: Dict, on_progress, should_cancel) -> Dict:
     finally:
         # El original subido ya no hace falta ni si falla.
         cleanup_path(source)
+    metadata = {**metadata, "media_format": params["media_format"]}
     return {
         "path": output,
         "name": build_download_name(
@@ -786,6 +884,498 @@ def _run_upscale_job(params: Dict, on_progress, should_cancel) -> Dict:
 
 
 _job_queue.register("upscale", _run_upscale_job)
+
+
+def _batch_checkpoint(
+    params: Dict[str, Any], on_progress, phase: str, done: int, total: int
+) -> None:
+    params["phase"] = phase
+    params["progress_done"] = done
+    params["progress_total"] = total
+    on_progress(done, total)
+
+
+def _as_dict(valor: Any) -> Dict[str, Any]:
+    """Normaliza a dict lo que devuelva el SDK: modelo, dict u objeto simple."""
+    if valor is None:
+        return {}
+    if isinstance(valor, dict):
+        return valor
+    if hasattr(valor, "model_dump"):
+        try:
+            return valor.model_dump()
+        except Exception:  # pragma: no cover - modelos ajenos
+            pass
+    # Los campos que el SDK no conoce pueden llegar como objeto plano.
+    return dict(vars(valor)) if hasattr(valor, "__dict__") else {}
+
+
+# Campos que oCabra sirve mientras el lote no ha terminado (BatchLiveStatus).
+# Sin ellos el portal se quedaba en 0% durante el minuto que tarda en cargar el
+# modelo, sin poder decir que estaba esperando.
+_BATCH_LIVE_KEYS = (
+    "live_phase",
+    "live_detail",
+    "queue_position",
+    "batch_wait_seconds",
+    "batch_in_flight",
+    "batch_waiting",
+    "batch_completed",
+    "batch_total",
+)
+_BATCH_LIVE_ONLY = (
+    "live_phase",
+    "live_detail",
+    "queue_position",
+    "batch_wait_seconds",
+    "batch_in_flight",
+    "batch_waiting",
+)
+
+
+def _clear_batch_live_status(params: Dict[str, Any]) -> None:
+    for clave in _BATCH_LIVE_KEYS:
+        params.pop(clave, None)
+
+
+def _apply_batch_live_status(params: Dict[str, Any], batch: Any) -> bool:
+    """Copia el estado vivo del lote a params. True si algo cambió."""
+    antes = {clave: params.get(clave) for clave in _BATCH_LIVE_KEYS}
+    counts = _as_dict(getattr(batch, "request_counts", None))
+    params["batch_completed"] = counts.get("completed") or 0
+    params["batch_total"] = counts.get("total") or 0
+    vivo = _as_dict(getattr(batch, "ocabra", None))
+    if vivo:
+        params["live_phase"] = str(vivo.get("phase") or "")
+        params["live_detail"] = str(vivo.get("detail") or "")
+        params["queue_position"] = vivo.get("queue_position")
+        params["batch_in_flight"] = vivo.get("in_flight") or 0
+        params["batch_waiting"] = vivo.get("waiting") or 0
+        espera = None
+        for modelo in vivo.get("models") or []:
+            datos = _as_dict(modelo)
+            if datos.get("expected_wait_seconds") is not None:
+                espera = datos["expected_wait_seconds"]
+                break
+        params["batch_wait_seconds"] = espera
+    else:
+        # El lote ha terminado: oCabra deja de servir el estado vivo.
+        for clave in _BATCH_LIVE_ONLY:
+            params.pop(clave, None)
+    return {clave: params.get(clave) for clave in _BATCH_LIVE_KEYS} != antes
+
+
+def _remember_remote_file(
+    params: Dict[str, Any], file_id: Optional[str], on_progress, done: int, total: int
+) -> None:
+    if not file_id:
+        return
+    remote = params.setdefault("remote_file_ids", [])
+    if file_id not in remote:
+        remote.append(file_id)
+    on_progress(done, total)
+
+
+def _delete_remote_files(client: OpenAI, params: Dict[str, Any]) -> None:
+    remaining = []
+    for file_id in params.get("remote_file_ids", []):
+        try:
+            client.files.delete(file_id)
+        except Exception:
+            remaining.append(file_id)
+    params["remote_file_ids"] = remaining
+
+
+def _wait_for_batch(client: OpenAI, batch_id: str, should_cancel, on_live=None):
+    terminal = {"completed", "failed", "expired", "cancelled"}
+    while True:
+        if should_cancel():
+            try:
+                client.batches.cancel(batch_id)
+            except Exception:
+                pass
+            raise RuntimeError("Trabajo cancelado")
+        batch = client.batches.retrieve(batch_id)
+        if on_live is not None:
+            on_live(batch)
+        if batch.status in terminal:
+            if batch.status != "completed":
+                detail = getattr(batch, "errors", None)
+                raise RuntimeError(
+                    f"El lote {batch_id} terminó en estado {batch.status}"
+                    + (f": {detail}" if detail else "")
+                )
+            return batch
+        time.sleep(BATCH_POLL_SECONDS)
+
+
+def _batch_output_lines(client: OpenAI, batch, params: Dict[str, Any], on_progress):
+    output_file_id = getattr(batch, "output_file_id", None)
+    error_file_id = getattr(batch, "error_file_id", None)
+    _remember_remote_file(params, output_file_id, on_progress, 2, 4)
+    _remember_remote_file(params, error_file_id, on_progress, 2, 4)
+    if not output_file_id:
+        detail = ""
+        if error_file_id:
+            detail = client.files.content(error_file_id).text.strip()
+        raise RuntimeError("El lote no generó resultados" + (f": {detail}" if detail else ""))
+    lines = []
+    for raw in client.files.content(output_file_id).text.splitlines():
+        if raw.strip():
+            lines.append(json.loads(raw))
+    errors = [line for line in lines if line.get("error")]
+    if errors:
+        raise RuntimeError(f"El lote devolvió errores: {errors[0]['error']}")
+    return lines
+
+
+def _submit_transcription_batch(
+    client: OpenAI,
+    params: Dict[str, Any],
+    audio_path: Path,
+    on_progress,
+) -> str:
+    audio_file = client.files.create(file=audio_path, purpose="batch_input_audio")
+    _remember_remote_file(params, audio_file.id, on_progress, 1, 4)
+    body = {
+        "file_id": audio_file.id,
+        "model": params["model"],
+        "response_format": "verbose_json",
+        "vad_filter": TRANSCRIPTION_VAD_FILTER,
+        "condition_on_previous_text": TRANSCRIPTION_CONDITION_ON_PREVIOUS_TEXT,
+    }
+    if TRANSCRIPTION_WORD_TIMESTAMPS:
+        body["timestamp_granularities"] = ["segment", "word"]
+    if params.get("diarize"):
+        body["diarize"] = True
+    line = {
+        "custom_id": "transcription-000001",
+        "method": "POST",
+        "url": "/v1/audio/transcriptions",
+        "body": body,
+    }
+    input_path = Path(params["workdir"]) / "transcription-input.jsonl"
+    input_path.write_text(json.dumps(line, ensure_ascii=False) + "\n", encoding="utf-8")
+    input_file = client.files.create(file=input_path, purpose="batch")
+    _remember_remote_file(params, input_file.id, on_progress, 1, 4)
+    batch = client.batches.create(
+        input_file_id=input_file.id,
+        endpoint="/v1/audio/transcriptions",
+        completion_window="24h",
+        metadata={"vhs_job": params["job_id"]},
+    )
+    params["transcription_batch_id"] = batch.id
+    return batch.id
+
+
+def _batch_line_content(line: Dict[str, Any]) -> str:
+    """Texto de la respuesta de una línea de lote de /v1/chat/completions."""
+    body = ((line.get("response") or {}).get("body") or {})
+    choices = body.get("choices") or []
+    if not choices:
+        return ""
+    return str((choices[0].get("message") or {}).get("content") or "")
+
+
+def _translation_request_body(
+    model: str, system: str, user: str, max_tokens: int
+) -> Dict[str, Any]:
+    body: Dict[str, Any] = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        "temperature": 0,
+        "max_tokens": max_tokens,
+    }
+    if OCABRA_EXTENSIONS and TRANSLATION_REASONING_EFFORT:
+        body["reasoning_effort"] = TRANSLATION_REASONING_EFFORT
+    return body
+
+
+def _translation_payload_texts(
+    payload: Dict[str, Any]
+) -> Tuple[List[str], List[Dict[str, Any]], bool]:
+    segments = _coerce_segments(payload)
+    if segments:
+        return [_segment_text(segment) for segment in segments], segments, True
+    text = payload.get("text") or ""
+    return [text if isinstance(text, str) else str(text)], segments, False
+
+
+def _translation_requests(
+    payload: Dict[str, Any], media_format: Optional[str] = None
+) -> Tuple[List[Dict[str, Any]], bool]:
+    """Peticiones del lote de traducción, agrupando segmentos como la ruta síncrona.
+
+    Antes se mandaba un segmento por petición: en un vídeo de 13 minutos eran
+    144 peticiones y repetir el prompt de sistema 144 veces (18.700 tokens de
+    entrada). Agrupando en lotes de TRANSLATION_BATCH_SIZE baja a 18 peticiones
+    y unos 3.000 tokens, con el mismo formato numerado que ya se valida en la
+    ruta síncrona.
+    """
+    texts, _segments, has_segments = _translation_payload_texts(payload)
+    model = resolve_translation_model()
+
+    if media_format and is_prose_translation_format(media_format):
+        requests = []
+        for posicion, bloque in enumerate(
+            _prose_blocks(texts, TRANSLATION_PROSE_WORDS)
+        ):
+            requests.append(
+                {
+                    "custom_id": f"prose-{posicion:06d}",
+                    "method": "POST",
+                    "url": "/v1/chat/completions",
+                    "body": _translation_request_body(
+                        model,
+                        TRANSLATION_PROSE_SYSTEM_PROMPT,
+                        TRANSLATION_USER_PROMPT_TEMPLATE.format(text=bloque),
+                        TRANSLATION_MAX_TOKENS,
+                    ),
+                }
+            )
+        return requests, has_segments
+
+    indices = _translatable_indices(texts)
+    size = max(1, TRANSLATION_BATCH_SIZE)
+    requests: List[Dict[str, Any]] = []
+    for offset in range(0, len(indices), size):
+        grupo = indices[offset : offset + size]
+        batch = [texts[index] for index in grupo]
+        system, numbered = _numbered_translation_prompt(batch)
+        # El tope está expresado por segmento, así que escala con el lote.
+        body = _translation_request_body(
+            model, system, numbered, TRANSLATION_BATCH_MAX_TOKENS * len(grupo)
+        )
+        requests.append(
+            {
+                # El custom_id codifica la posición dentro de los segmentos
+                # traducibles y cuántos lleva, así que el mapeo se reconstruye
+                # sin guardar estado entre fases.
+                "custom_id": f"group-{offset:06d}-{len(grupo):03d}",
+                "method": "POST",
+                "url": "/v1/chat/completions",
+                "body": body,
+            }
+        )
+    return requests, has_segments
+
+
+def _submit_translation_batch(
+    client: OpenAI,
+    params: Dict[str, Any],
+    payload: Dict[str, Any],
+    on_progress,
+) -> str:
+    requests, has_segments = _translation_requests(payload, params.get("media_format"))
+    params["translation_has_segments"] = has_segments
+    input_path = Path(params["workdir"]) / "translation-input.jsonl"
+    input_path.write_text(
+        "".join(json.dumps(line, ensure_ascii=False) + "\n" for line in requests),
+        encoding="utf-8",
+    )
+    input_file = client.files.create(file=input_path, purpose="batch")
+    _remember_remote_file(params, input_file.id, on_progress, 3, 4)
+    batch = client.batches.create(
+        input_file_id=input_file.id,
+        endpoint="/v1/chat/completions",
+        completion_window="24h",
+        metadata={"vhs_job": params["job_id"]},
+    )
+    params["translation_batch_id"] = batch.id
+    return batch.id
+
+
+def _apply_translation_batch(
+    payload: Dict[str, Any],
+    lines: List[Dict[str, Any]],
+    has_segments: bool,
+    client: Optional[OpenAI] = None,
+) -> Dict[str, Any]:
+    texts, segments, _has = _translation_payload_texts(payload)
+
+    # El modo se deduce de los custom_id, así que un trabajo reanudado sigue
+    # entendiendo el lote que dejó en vuelo.
+    prosa: Dict[int, str] = {}
+    for line in lines:
+        custom_id = str(line.get("custom_id") or "")
+        if custom_id.startswith("prose-"):
+            prosa[int(custom_id.split("-", 1)[1])] = _sanitize_translation(
+                _batch_line_content(line)
+            )
+    if prosa:
+        if not all(prosa.get(i, "").strip() for i in range(len(prosa))):
+            raise RuntimeError("La traducción Batch devolvió un bloque vacío")
+        payload["text"] = "\n\n".join(
+            prosa[i] for i in sorted(prosa)
+        ).strip()
+        payload["segments"] = []
+        return payload
+
+    indices = _translatable_indices(texts)
+    traducidos: Dict[int, str] = {}
+    reintentar: List[int] = []
+
+    for line in lines:
+        custom_id = str(line.get("custom_id") or "")
+        content = _batch_line_content(line)
+        if custom_id.startswith("group-"):
+            partes = custom_id.split("-")
+            if len(partes) != 3:
+                continue
+            offset, count = int(partes[1]), int(partes[2])
+            grupo = indices[offset : offset + count]
+            parsed = _parse_numbered_translation(content, len(grupo))
+            if parsed is None:
+                # Mismo criterio que la ruta síncrona: un lote mal alineado no
+                # se acepta, se repite segmento a segmento.
+                reintentar.extend(grupo)
+                continue
+            for index, texto in zip(grupo, parsed):
+                traducidos[index] = texto
+        elif custom_id.startswith("segment-"):
+            # Formato de una petición por segmento: lo siguen usando los
+            # trabajos que ya tenían un lote en vuelo antes de agrupar.
+            index = int(custom_id.split("-", 1)[1])
+            limpio = _sanitize_translation(content)
+            if limpio:
+                traducidos[index] = limpio
+
+    if reintentar:
+        cliente = client or create_openai_client()
+        model = resolve_translation_model()
+        for index in reintentar:
+            traducidos[index] = _translate_one(cliente, model, texts[index])
+
+    faltan = [index for index in indices if index not in traducidos]
+    if faltan:
+        raise RuntimeError(
+            f"La traducción Batch devolvió {len(indices) - len(faltan)} de "
+            f"{len(indices)} segmentos"
+        )
+
+    # Los segmentos sin texto se quedan como estaban, en su posición.
+    ordered = [traducidos.get(index, texts[index]) for index in range(len(texts))]
+    if has_segments:
+        for segment, texto in zip(segments, ordered):
+            segment["text"] = texto
+        payload["segments"] = segments
+        payload["text"] = " ".join(t for t in ordered if t.strip()).strip()
+    else:
+        payload["text"] = ordered[0]
+    return payload
+
+
+def _prepare_batch_audio(params: Dict[str, Any], workdir: Path) -> Tuple[Path, str]:
+    if params.get("url"):
+        downloaded, metadata = download_media(params["url"], "audio_med")
+        source_name = metadata.get("title") or "transcript"
+        target = workdir / (downloaded.name or "audio.mp3")
+        if downloaded.resolve() != target.resolve():
+            shutil.copy2(downloaded, target)
+        return target, source_name
+    source = Path(params["source"])
+    extracted = extract_audio_profile_from_file(source, "audio_med")
+    target = workdir / (extracted.name or "audio.mp3")
+    if extracted.resolve() != target.resolve():
+        shutil.move(str(extracted), target)
+    return target, params.get("source_name") or source.name
+
+
+def _run_transcription_batch_job(params: Dict, on_progress, should_cancel) -> Dict:
+    """Pipeline reanudable: STT Batch, traducción Batch y resultado local."""
+    workdir = Path(params["workdir"])
+    workdir.mkdir(parents=True, exist_ok=True)
+    raw_path = workdir / "transcription.json"
+    client = create_openai_client()
+    stage = params.get("stage", "prepare")
+
+    def publicar_estado(batch: Any) -> None:
+        if _apply_batch_live_status(params, batch):
+            on_progress(
+                params.get("progress_done", 0), params.get("progress_total", 4)
+            )
+
+    try:
+        if stage == "prepare":
+            _batch_checkpoint(params, on_progress, "preparing", 0, 4)
+            audio_path, source_name = _prepare_batch_audio(params, workdir)
+            params["source_name"] = source_name
+            batch_id = _submit_transcription_batch(client, params, audio_path, on_progress)
+            params["stage"] = "transcribing"
+            _batch_checkpoint(params, on_progress, "transcribing", 1, 4)
+            stage = "transcribing"
+        if stage == "transcribing":
+            batch = _wait_for_batch(
+                client,
+                params["transcription_batch_id"],
+                should_cancel,
+                publicar_estado,
+            )
+            lines = _batch_output_lines(client, batch, params, on_progress)
+            body = ((lines[0].get("response") or {}).get("body") or {})
+            payload = _normalize_transcription_payload(body)
+            payload = prepare_transcription_payload(payload, params["media_format"])
+            raw_path.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            _delete_remote_files(client, params)
+            params["stage"] = "transcribed"
+            _batch_checkpoint(params, on_progress, "transcribed", 2, 4)
+            stage = "transcribed"
+        if stage == "transcribed" and params.get("translate"):
+            payload = json.loads(raw_path.read_text(encoding="utf-8"))
+            batch_id = _submit_translation_batch(client, params, payload, on_progress)
+            params["stage"] = "translating"
+            _batch_checkpoint(params, on_progress, "translating", 3, 4)
+            stage = "translating"
+        if stage == "translating":
+            batch = _wait_for_batch(
+                client, params["translation_batch_id"], should_cancel, publicar_estado
+            )
+            lines = _batch_output_lines(client, batch, params, on_progress)
+            payload = json.loads(raw_path.read_text(encoding="utf-8"))
+            payload = _apply_translation_batch(
+                payload, lines, bool(params.get("translation_has_segments")), client
+            )
+            raw_path.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            _delete_remote_files(client, params)
+            params["stage"] = "translated"
+            _batch_checkpoint(params, on_progress, "translated", 3, 4)
+        if should_cancel():
+            raise RuntimeError("Trabajo cancelado")
+        payload = json.loads(raw_path.read_text(encoding="utf-8"))
+        media_format = params["media_format"]
+        extension = FORMAT_EXTENSIONS.get(media_format, ".txt")
+        output = workdir / f"result{extension}"
+        output.write_bytes(render_transcription_payload(payload, media_format))
+        _clear_batch_live_status(params)
+        _batch_checkpoint(params, on_progress, "ready", 4, 4)
+        if params.get("source"):
+            cleanup_path(Path(params["source"]))
+        return {
+            "path": output,
+            "name": build_transcription_download_name(
+                params.get("source_name") or "transcript", media_format
+            ),
+            "metadata": {
+                "title": params.get("source_name") or "Transcripción",
+                "media_format": media_format,
+                "transcription_model": params["model"],
+                "diarization": bool(params.get("diarize")),
+                "translation": bool(params.get("translate")),
+                "transcription_stats": estimate_transcription_stats(payload),
+            },
+        }
+    finally:
+        _delete_remote_files(client, params)
+
+
+_batch_job_queue.register("transcription_batch", _run_transcription_batch_job)
 
 TRANSCRIPTION_FILE_SUFFIX = ".transcript.json"
 
@@ -1999,15 +2589,31 @@ _WHITESPACE_RE = re.compile(r"\s+")
 
 
 def _chat_translate(client: OpenAI, model: str, system: str, user: str) -> str:
-    completion = client.chat.completions.create(
-        model=model,
-        messages=[
+    request: Dict[str, Any] = {
+        "model": model,
+        "messages": [
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ],
-        temperature=0,
-    )
-    return completion.choices[0].message.content or ""
+        "temperature": 0,
+        "max_tokens": TRANSLATION_MAX_TOKENS,
+    }
+    if OCABRA_EXTENSIONS and TRANSLATION_REASONING_EFFORT:
+        request["extra_body"] = {
+            "reasoning_effort": TRANSLATION_REASONING_EFFORT,
+        }
+    completion = client.chat.completions.create(**request)
+    choice = completion.choices[0]
+    content = choice.message.content or ""
+    if not content.strip() and getattr(choice, "finish_reason", None) == "length":
+        # Se agotó el presupuesto antes de escribir nada (típico si el modelo
+        # razona aunque no se lo pidan). Con un texto vacío el llamante no
+        # podría distinguirlo de un silencio.
+        raise DownloadError(
+            "El modelo de traducción agotó max_tokens sin devolver texto: "
+            "sube TRANSLATION_MAX_TOKENS o desactiva el razonamiento"
+        )
+    return content
 
 
 def _translate_one(client: OpenAI, model: str, text: str) -> str:
@@ -2020,15 +2626,8 @@ def _translate_one(client: OpenAI, model: str, text: str) -> str:
     return translated
 
 
-def _translate_batch(
-    client: OpenAI, model: str, batch: List[str]
-) -> Optional[List[str]]:
-    """Traduce varios segmentos en una sola petición.
-
-    Devuelve None si la respuesta no respeta la numeración pedida, para que el
-    llamante reintente ese lote segmento a segmento. Un lote mal alineado
-    desplazaría los subtítulos, así que ante la duda no se acepta.
-    """
+def _numbered_translation_prompt(batch: List[str]) -> Tuple[str, str]:
+    """Prompt de sistema y de usuario para traducir varios segmentos de una vez."""
     numbered = "\n".join(
         f"{index}. {_WHITESPACE_RE.sub(' ', str(text)).strip()}"
         for index, text in enumerate(batch, 1)
@@ -2040,20 +2639,122 @@ def _translate_batch(
         "traduciendo cada una por separado. No fusiones ni dividas líneas, "
         "y no añadas ninguna línea extra."
     )
-    raw = _chat_translate(client, model, system, numbered)
+    return system, numbered
 
+
+def _parse_numbered_translation(raw: str, expected_count: int) -> Optional[List[str]]:
+    """Convierte la respuesta numerada en una lista, o None si no cuadra.
+
+    No basta con contar líneas: hay que comprobar que la respuesta es
+    exactamente la lista pedida. Una línea de continuación (el modelo partió un
+    segmento en dos) o un número repetido colaban texto en el segmento
+    equivocado y perdían el resto sin que nadie se enterara.
+    """
     parsed: Dict[int, str] = {}
+    visto_numerada = False
     for line in raw.splitlines():
+        if not line.strip():
+            continue
         match = _BATCH_LINE_RE.match(line)
-        if match:
-            parsed[int(match.group(1))] = _sanitize_translation(match.group(2))
-    expected = range(1, len(batch) + 1)
-    if len(parsed) != len(batch) or not all(parsed.get(i) for i in expected):
+        if not match:
+            if visto_numerada:
+                return None
+            # Preámbulo antes de la primera línea numerada: se ignora.
+            continue
+        visto_numerada = True
+        index = int(match.group(1))
+        if index in parsed or not 1 <= index <= expected_count:
+            return None
+        parsed[index] = _sanitize_translation(match.group(2))
+    expected = range(1, expected_count + 1)
+    if len(parsed) != expected_count or not all(parsed.get(i) for i in expected):
         return None
     return [parsed[i] for i in expected]
 
 
-def _translate_texts_to_spanish(texts: List[str]) -> List[str]:
+def is_prose_translation_format(media_format: str) -> bool:
+    """¿El formato es texto corrido sin marcas de tiempo ni hablantes?
+
+    En el TXT plano no hay que preservar la alineación de los subtítulos, así
+    que traducir el texto seguido en bloques sale mejor: el modelo restaura la
+    puntuación y los párrafos que Whisper no pone, en vez de pegar 144 trozos
+    sueltos con espacios.
+    """
+    if not TRANSLATION_PROSE_TEXT:
+        return False
+    return normalize_media_format(media_format) == "transcript_translate_text"
+
+
+def _prose_blocks(texts: List[str], palabras_max: int) -> List[str]:
+    """Agrupa los segmentos en bloques de como mucho `palabras_max` palabras."""
+    bloques: List[str] = []
+    actual: List[str] = []
+    cuenta = 0
+    for value in texts:
+        texto = str(value).strip()
+        if not texto:
+            continue
+        palabras = len(texto.split())
+        if actual and cuenta + palabras > palabras_max:
+            bloques.append(" ".join(actual))
+            actual, cuenta = [], 0
+        actual.append(texto)
+        cuenta += palabras
+    if actual:
+        bloques.append(" ".join(actual))
+    return bloques
+
+
+def _translate_prose(texts: List[str]) -> str:
+    """Traduce el texto seguido por bloques, en paralelo."""
+    model = resolve_translation_model()
+    bloques = _prose_blocks(texts, max(50, TRANSLATION_PROSE_WORDS))
+    if not bloques:
+        return ""
+    client = create_openai_client()
+
+    def traducir(bloque: str) -> str:
+        return _sanitize_translation(
+            _chat_translate(
+                client,
+                model,
+                TRANSLATION_PROSE_SYSTEM_PROMPT,
+                TRANSLATION_USER_PROMPT_TEMPLATE.format(text=bloque),
+            )
+        )
+
+    workers = min(max(1, TRANSLATION_CONCURRENCY), len(bloques))
+    if workers > 1:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            partes = list(pool.map(traducir, bloques))
+    else:
+        partes = [traducir(bloque) for bloque in bloques]
+    if any(not parte.strip() for parte in partes):
+        raise DownloadError("La traducción devolvió un bloque de texto vacío")
+    return "\n\n".join(partes).strip()
+
+
+def _translatable_indices(texts: List[str]) -> List[int]:
+    """Posiciones con texto real: los silencios no se mandan al LLM."""
+    return [index for index, value in enumerate(texts) if str(value).strip()]
+
+
+def _translate_batch(
+    client: OpenAI, model: str, batch: List[str]
+) -> Optional[List[str]]:
+    """Traduce varios segmentos en una sola petición.
+
+    Devuelve None si la respuesta no respeta la numeración pedida, para que el
+    llamante reintente ese lote segmento a segmento. Un lote mal alineado
+    desplazaría los subtítulos, así que ante la duda no se acepta.
+    """
+    system, numbered = _numbered_translation_prompt(batch)
+    raw = _chat_translate(client, model, system, numbered)
+    return _parse_numbered_translation(raw, len(batch))
+
+
+def resolve_translation_model() -> str:
+    """Modelo de chat para traducir, validado antes de gastar la transcripción."""
     if not TRANSCRIPTION_API_KEY:
         raise DownloadError("La traducción requiere configurar TRANSCRIPTION_API_KEY")
     model = TRANSLATION_MODEL or TRANSCRIPTION_MODEL
@@ -2061,10 +2762,29 @@ def _translate_texts_to_spanish(texts: List[str]) -> List[str]:
         raise DownloadError(
             "Configura TRANSLATION_MODEL con un modelo de chat válido para traducir al español"
         )
+    return model
+
+
+def _translate_texts_to_spanish(texts: List[str]) -> List[str]:
+    model = resolve_translation_model()
     if not texts:
         return []
 
-    client = OpenAI(api_key=TRANSCRIPTION_API_KEY, base_url=TRANSCRIPTION_ENDPOINT)
+    # Los segmentos sin texto (silencios, recortes del VAD, huecos de la
+    # diarización) no se mandan al LLM: pedirle traducir una cadena vacía
+    # devolvía vacío y abortaba el trabajo completo. Se dejan como están y se
+    # traduce solo el resto, manteniendo las posiciones.
+    pendientes = [i for i, value in enumerate(texts) if str(value).strip()]
+    if not pendientes:
+        return [str(value) for value in texts]
+    if len(pendientes) != len(texts):
+        traducidos = _translate_texts_to_spanish([texts[i] for i in pendientes])
+        resultado = [str(value) for value in texts]
+        for posicion, traducido in zip(pendientes, traducidos):
+            resultado[posicion] = traducido
+        return resultado
+
+    client = create_openai_client()
     size = max(1, TRANSLATION_BATCH_SIZE)
     batches = [texts[i : i + size] for i in range(0, len(texts), size)]
 
@@ -2093,7 +2813,17 @@ def _translate_texts_to_spanish(texts: List[str]) -> List[str]:
     return results
 
 
-def translate_transcription_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+def translate_transcription_payload(
+    payload: Dict[str, Any], media_format: Optional[str] = None
+) -> Dict[str, Any]:
+    if media_format and is_prose_translation_format(media_format):
+        texts, _segments, _has = _translation_payload_texts(payload)
+        payload["text"] = _translate_prose(texts)
+        # Los segmentos se quedarían en el idioma original y este formato no los
+        # usa, así que se descartan para que nadie los dé por traducidos.
+        payload["segments"] = []
+        return payload
+
     segments = payload.get("segments")
     if isinstance(segments, dict):
         seg_list = list(segments.values())
@@ -2162,6 +2892,336 @@ def _format_srt_timestamp(seconds: float) -> str:
     return f"{hours:02}:{minutes:02}:{secs:02},{millis:03}"
 
 
+def _reparto_optimo(
+    palabras: List[str], max_chars: int, lineas: int
+) -> Optional[List[str]]:
+    """Reparte las palabras en exactamente `lineas` líneas de <= max_chars.
+
+    Prueba todos los puntos de corte y se queda con el reparto más parejo
+    (minimiza la suma de cuadrados de las longitudes, que con una suma fija
+    equivale a igualarlas). Un reparto voraz no sirve: hay textos que caben en
+    dos líneas solo si la primera no se llena hasta el tope.
+    """
+    total = len(palabras)
+    if lineas <= 0 or total < lineas:
+        return None
+    largos = [len(palabra) for palabra in palabras]
+
+    def ancho(desde: int, hasta: int) -> int:
+        return sum(largos[desde:hasta]) + (hasta - desde - 1)
+
+    memoria: Dict[Tuple[int, int], Tuple[float, Optional[int]]] = {}
+
+    def mejor(desde: int, restantes: int) -> Tuple[float, Optional[int]]:
+        if restantes == 1:
+            medida = ancho(desde, total)
+            if desde < total and medida <= max_chars:
+                return float(medida) ** 2, total
+            return float("inf"), None
+        clave = (desde, restantes)
+        if clave in memoria:
+            return memoria[clave]
+        resultado: Tuple[float, Optional[int]] = (float("inf"), None)
+        for corte in range(desde + 1, total - restantes + 2):
+            medida = ancho(desde, corte)
+            if medida > max_chars:
+                break
+            coste_resto, _ = mejor(corte, restantes - 1)
+            if coste_resto == float("inf"):
+                continue
+            coste = float(medida) ** 2 + coste_resto
+            if coste < resultado[0]:
+                resultado = (coste, corte)
+        memoria[clave] = resultado
+        return resultado
+
+    salida: List[str] = []
+    desde, restantes = 0, lineas
+    while restantes > 0:
+        coste, corte = mejor(desde, restantes)
+        if coste == float("inf") or corte is None:
+            return None
+        salida.append(" ".join(palabras[desde:corte]))
+        desde, restantes = corte, restantes - 1
+    return salida if desde == total else None
+
+
+def _wrap_cue_lines(
+    text: str, max_chars: int, lineas_minimas: int = 0
+) -> List[str]:
+    """Parte el texto en el menor número de líneas equilibradas de max_chars."""
+    text = _WHITESPACE_RE.sub(" ", text).strip()
+    if not text:
+        return []
+    palabras = text.split(" ")
+    imprescindibles = max(1, math.ceil(len(text) / max_chars))
+    objetivo = max(imprescindibles, lineas_minimas, 1)
+    for lineas_objetivo in range(objetivo, len(palabras) + 1):
+        reparto = _reparto_optimo(palabras, max_chars, lineas_objetivo)
+        if reparto:
+            return reparto
+    # Alguna palabra es más larga que el ancho permitido: se deja tal cual.
+    return [text]
+
+
+def _payload_words(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Palabras con marca de tiempo, si el modelo las ha devuelto."""
+    words = payload.get("words")
+    if isinstance(words, list):
+        return [w for w in words if isinstance(w, dict) and w.get("start") is not None]
+    return []
+
+
+def _words_for_segment(
+    words: List[Dict[str, Any]], cursor: int, start: float, end: float
+) -> Tuple[List[Dict[str, Any]], int]:
+    """Palabras cuyo centro cae dentro del segmento, consumidas en orden."""
+    seleccion: List[Dict[str, Any]] = []
+    posicion = cursor
+    while posicion < len(words):
+        palabra = words[posicion]
+        inicio = float(palabra.get("start") or 0)
+        fin = float(palabra.get("end") or inicio)
+        centro = (inicio + fin) / 2
+        if centro < start - 0.001:
+            # Palabra anterior a este segmento (hueco del VAD): se descarta.
+            posicion += 1
+            continue
+        if centro > end + 0.001:
+            break
+        seleccion.append(palabra)
+        posicion += 1
+    return seleccion, posicion
+
+
+_FIN_DE_FRASE = (".", "?", "!", "…")
+_PAUSA_SUAVE = (",", ";", ":")
+
+
+def _cortar_por_pausas(
+    palabras: List[Dict[str, Any]], max_chars: int
+) -> List[List[Dict[str, Any]]]:
+    """Agrupa palabras en subtítulos cortando por las pausas más marcadas.
+
+    De todos los cortes que caben en un subtítulo se elige el mejor, no el
+    primero que valga: cortar en cuanto aparecía una pausa dejaba subtítulos de
+    una sola palabra. Se puntúa el silencio que sigue a la palabra, la
+    puntuación con la que acaba y lo aprovechada que queda la línea.
+    """
+    textos = [str(palabra.get("word") or "").strip() for palabra in palabras]
+    total = len(palabras)
+    # Reparto equilibrado: llenar cada subtítulo hasta el tope dejaba el sobrante
+    # del segmento en un último subtítulo de dos palabras.
+    caracteres = len(" ".join(textos))
+    trozos = max(1, math.ceil(caracteres / max_chars))
+    objetivo = caracteres / trozos
+    grupos: List[List[Dict[str, Any]]] = []
+    inicio = 0
+    while inicio < total:
+        candidatos: List[Tuple[int, int]] = []
+        longitud = 0
+        posicion = inicio
+        while posicion < total:
+            longitud += len(textos[posicion]) + (1 if posicion > inicio else 0)
+            if longitud > max_chars and posicion > inicio:
+                break
+            candidatos.append((posicion, longitud))
+            posicion += 1
+        if not candidatos:
+            candidatos = [(inicio, len(textos[inicio]))]
+        if candidatos[-1][0] == total - 1:
+            grupos.append(palabras[inicio:total])
+            break
+
+        mejor: Optional[int] = None
+        mejor_puntuacion = 0.0
+        for indice, longitud in candidatos:
+            # Muy por debajo del reparto ideal se dejaría un hueco que acabaría
+            # en un subtítulo huérfano.
+            if longitud < objetivo * 0.6:
+                continue
+            siguiente = palabras[indice + 1]
+            hueco = float(siguiente.get("start") or 0) - float(
+                palabras[indice].get("end") or 0
+            )
+            puntuacion = min(max(hueco, 0.0), 1.0) * 2.0
+            if textos[indice].endswith(_FIN_DE_FRASE):
+                puntuacion += 1.0
+            elif textos[indice].endswith(_PAUSA_SUAVE):
+                puntuacion += 0.4
+            puntuacion += 1.0 - abs(longitud - objetivo) / max_chars
+            if mejor is None or puntuacion > mejor_puntuacion:
+                mejor, mejor_puntuacion = indice, puntuacion
+        if mejor is None:
+            mejor = candidatos[-1][0]
+        grupos.append(palabras[inicio : mejor + 1])
+        inicio = mejor + 1
+    return grupos
+
+
+def _segment_to_cues_by_words(
+    palabras: List[Dict[str, Any]], prefix: str = "", maximo: int = 0
+) -> List[Tuple[float, float, str]]:
+    """Subtítulos con los tiempos reales de la primera y la última palabra."""
+    cues: List[Tuple[float, float, str]] = []
+    maximo = maximo or SRT_MAX_LINE_CHARS * SRT_MAX_LINES
+    for grupo in _cortar_por_pausas(palabras, maximo):
+        texto = " ".join(
+            str(palabra.get("word") or "").strip() for palabra in grupo
+        ).strip()
+        texto = _WHITESPACE_RE.sub(" ", texto)
+        if not texto:
+            continue
+        inicio = float(grupo[0].get("start") or 0)
+        fin = float(grupo[-1].get("end") or inicio)
+        cues.append((inicio, max(fin, inicio), texto))
+    if cues and prefix:
+        inicio, fin, texto = cues[0]
+        cues[0] = (inicio, fin, f"{prefix}{texto}")
+    return cues
+
+
+def resegment_payload_by_words(
+    payload: Dict[str, Any], maximo: int = 0
+) -> Dict[str, Any]:
+    """Rehace los segmentos cortando por las pausas entre palabras.
+
+    Se aplica antes de traducir, de modo que cada subtítulo es también la
+    unidad que se traduce y sus tiempos son los del audio, no un reparto a
+    prorrata de los caracteres. Si el modelo no devolvió palabras, el payload
+    se queda como está y el SRT cae al troceado por caracteres.
+    """
+    palabras = _payload_words(payload)
+    segmentos = _coerce_segments(payload)
+    if not palabras or not segmentos:
+        return payload
+
+    nuevos: List[Dict[str, Any]] = []
+    cursor = 0
+    for segmento in segmentos:
+        inicio = float(segmento.get("start") or 0)
+        fin = float(segmento.get("end") or inicio)
+        del_segmento, cursor = _words_for_segment(palabras, cursor, inicio, fin)
+        if not del_segmento:
+            # Sin palabras asignadas se conserva el segmento original.
+            if _segment_text(segmento).strip():
+                nuevos.append(segmento)
+            continue
+        for cue_inicio, cue_fin, texto in _segment_to_cues_by_words(
+            del_segmento, maximo=maximo
+        ):
+            cue: Dict[str, Any] = {
+                "start": cue_inicio,
+                "end": cue_fin,
+                "text": texto,
+            }
+            if segmento.get("speaker") is not None:
+                cue["speaker"] = segmento["speaker"]
+            nuevos.append(cue)
+
+    if not nuevos:
+        return payload
+
+    # Los tiempos de palabra son los del habla: si el subtítulo desapareciera
+    # al acabar la última palabra, el silencio siguiente no se aprovecharía
+    # para leer. Se alarga hasta poco antes del siguiente, con un tope.
+    for posicion, cue in enumerate(nuevos[:-1]):
+        hueco_siguiente = float(nuevos[posicion + 1].get("start") or 0)
+        limite = min(
+            hueco_siguiente - SRT_CUE_GAP_SECONDS,
+            float(cue["end"]) + SRT_CUE_MAX_EXTENSION,
+        )
+        if limite > float(cue["end"]):
+            cue["end"] = limite
+
+    payload["segments"] = nuevos
+    # Las palabras ya están repartidas en los segmentos; conservarlas
+    # duplicaría el contenido en el JSON sin aportar nada.
+    payload.pop("words", None)
+    return payload
+
+
+def prepare_transcription_payload(
+    payload: Dict[str, Any], media_format: str
+) -> Dict[str, Any]:
+    """Ajusta el payload recién transcrito según el formato pedido."""
+    normalized = normalize_media_format(media_format)
+    if not (SRT_SPLIT_CUES and normalized.endswith("_srt")):
+        return payload
+    maximo = SRT_MAX_LINE_CHARS * SRT_MAX_LINES
+    if is_translation_format(normalized):
+        # El español ocupa más que el inglés: si el subtítulo se corta al tope,
+        # la traducción ya no cabe en dos líneas y hay que volver a partirla,
+        # esta vez a prorrata y perdiendo la sincronía que acabamos de ganar.
+        maximo = max(SRT_MAX_LINE_CHARS, int(maximo / TRANSLATION_EXPANSION))
+    return resegment_payload_by_words(payload, maximo)
+
+
+def _segment_to_cues(
+    start: float, end: float, text: str, prefix: str = ""
+) -> List[Tuple[float, float, str]]:
+    """Trocea un segmento en subtítulos de SRT_MAX_LINES x SRT_MAX_LINE_CHARS.
+
+    Whisper devuelve segmentos de hasta 20 segundos: volcados tal cual daban
+    subtítulos de más de 250 caracteres en una sola línea, ilegibles en
+    cualquier reproductor. El tiempo se reparte en proporción a los caracteres
+    de cada trozo.
+    """
+    text = text.strip()
+    if not text:
+        return []
+    if not SRT_SPLIT_CUES:
+        return [(start, end, f"{prefix}{text}")]
+    # El prefijo cuenta para el ancho: si se añade después, la primera línea se
+    # pasa del máximo justo en los cambios de hablante.
+    text = f"{prefix}{text}"
+    # Se pide un número de líneas múltiplo del tamaño del subtítulo para que
+    # todos queden llenos: con 5 líneas sobraba una sola, que se quedaba con una
+    # fracción mínima del tiempo ("es" durante 0,11 s).
+    imprescindibles = max(1, math.ceil(len(text) / SRT_MAX_LINE_CHARS))
+    if imprescindibles > 1:
+        objetivo = math.ceil(imprescindibles / SRT_MAX_LINES) * SRT_MAX_LINES
+    else:
+        # Lo que cabe en una línea se queda en una línea.
+        objetivo = 1
+    lineas = _wrap_cue_lines(text, SRT_MAX_LINE_CHARS, objetivo)
+    if not lineas:
+        return []
+    grupos = [
+        lineas[i : i + SRT_MAX_LINES] for i in range(0, len(lineas), SRT_MAX_LINES)
+    ]
+    textos = ["\n".join(grupo) for grupo in grupos]
+    total = sum(len(t) for t in textos) or 1
+    duracion = max(0.0, float(end) - float(start))
+    cues: List[Tuple[float, float, str]] = []
+    cursor = float(start)
+    for posicion, texto in enumerate(textos):
+        if posicion == len(textos) - 1:
+            fin = float(end)
+        else:
+            fin = cursor + duracion * len(texto) / total
+        cues.append((cursor, max(fin, cursor), texto))
+        cursor = fin
+
+    # Ningún subtítulo debe parpadear: si alguno queda por debajo del mínimo se
+    # le roba tiempo al anterior, que para eso va seguido en el mismo segmento.
+    for posicion in range(len(cues) - 1, 0, -1):
+        inicio, fin, texto = cues[posicion]
+        if fin - inicio >= SRT_MIN_CUE_SECONDS:
+            continue
+        anterior_inicio, _anterior_fin, anterior_texto = cues[posicion - 1]
+        # Al anterior se le deja siempre su propio mínimo: si no hay margen se
+        # acepta el subtítulo corto antes que estropear los dos.
+        nuevo_inicio = max(
+            anterior_inicio + SRT_MIN_CUE_SECONDS, fin - SRT_MIN_CUE_SECONDS
+        )
+        if nuevo_inicio >= fin:
+            continue
+        cues[posicion] = (nuevo_inicio, fin, texto)
+        cues[posicion - 1] = (anterior_inicio, nuevo_inicio, anterior_texto)
+    return cues
+
+
 def transcription_payload_to_srt(payload: Dict[str, Any]) -> str:
     segments = _coerce_segments(payload)
     if not isinstance(segments, list) or not segments:
@@ -2169,16 +3229,23 @@ def transcription_payload_to_srt(payload: Dict[str, Any]) -> str:
         text_str = text_value.strip() if isinstance(text_value, str) else str(text_value)
         return "1\n00:00:00,000 --> 00:00:00,000\n" + text_str + "\n"
 
+    cues: List[Tuple[float, float, str]] = []
+    hablante_anterior: Optional[str] = None
+    for segment in segments:
+        start = float(segment.get("start") or 0)
+        end = float(segment.get("end") or start)
+        hablante = str(segment.get("speaker") or "").strip()
+        prefijo = _segment_speaker(segment) if hablante != hablante_anterior else ""
+        hablante_anterior = hablante
+        cues.extend(
+            _segment_to_cues(start, end, _segment_text(segment), prefijo)
+        )
+
     entries: List[str] = []
-    for index, segment in enumerate(segments, start=1):
-        start = segment.get("start")
-        end = segment.get("end")
-        text_value = _segment_text(segment)
-        start_ts = _format_srt_timestamp(float(start or 0))
-        end_ts = _format_srt_timestamp(float(end or start or 0))
-        speaker_prefix = _segment_speaker(segment)
-        cleaned = f"{speaker_prefix}{text_value.strip()}"
-        entries.append(f"{index}\n{start_ts} --> {end_ts}\n{cleaned}\n")
+    for index, (start, end, text_value) in enumerate(cues, start=1):
+        start_ts = _format_srt_timestamp(start)
+        end_ts = _format_srt_timestamp(end)
+        entries.append(f"{index}\n{start_ts} --> {end_ts}\n{text_value}\n")
     return "\n".join(entries).strip() + "\n"
 
 
@@ -2329,17 +3396,32 @@ def extract_audio_profile_from_file(source_path: Path, profile_key: str = "audio
 
 
 def _call_openai_transcription(
-    file_path: Path, transcription_model: Optional[str] = None
+    file_path: Path,
+    transcription_model: Optional[str] = None,
+    diarize: bool = False,
 ) -> Dict[str, Any]:
     model = (transcription_model or "").strip()
     if not model:
         model = resolve_transcription_model(None)
-    client = OpenAI(api_key=TRANSCRIPTION_API_KEY, base_url=TRANSCRIPTION_ENDPOINT)
+    client = create_openai_client()
+    extra_body: Optional[Dict[str, Any]] = None
+    if OCABRA_EXTENSIONS:
+        extra_body = {
+            "vad_filter": TRANSCRIPTION_VAD_FILTER,
+            "condition_on_previous_text": TRANSCRIPTION_CONDITION_ON_PREVIOUS_TEXT,
+        }
+        if diarize:
+            extra_body["diarize"] = True
+    peticion: Dict[str, Any] = {
+        "model": model,
+        "response_format": "verbose_json",
+        "extra_body": extra_body,
+    }
+    if TRANSCRIPTION_WORD_TIMESTAMPS:
+        peticion["timestamp_granularities"] = ["segment", "word"]
     with file_path.open("rb") as audio_stream:
         response = client.audio.transcriptions.create(
-            model=model,
-            file=audio_stream,
-            response_format="verbose_json",
+            file=audio_stream, **peticion
         )
     return _normalize_transcription_payload(response)
 
@@ -2361,7 +3443,11 @@ def transcribe_audio_file(
         else resolve_transcription_model(transcription_model)
     )
     try:
-        return _call_openai_transcription(file_path, selected_model)
+        return _call_openai_transcription(
+            file_path,
+            selected_model,
+            diarize=effective_diarize,
+        )
     except Exception as exc:  # pragma: no cover - servicios externos
         raise DownloadError(
             f"No se pudo transcribir el audio con el modelo '{selected_model}': {exc}"
@@ -2415,8 +3501,11 @@ def _generate_transcription_file_uncached(
         selected_model,
         diarize=effective_diarize,
     )
+    transcript_payload = prepare_transcription_payload(transcript_payload, media_format)
     if translation:
-        transcript_payload = translate_transcription_payload(transcript_payload)
+        transcript_payload = translate_transcription_payload(
+            transcript_payload, media_format
+        )
     transcription_stats = estimate_transcription_stats(transcript_payload)
 
     if media_format.endswith("_json") or media_format == "transcript_json":
@@ -2493,8 +3582,13 @@ def generate_transcription_file_no_cache(
             selected_model,
             diarize=effective_diarize,
         )
+        transcript_payload = prepare_transcription_payload(
+            transcript_payload, media_format
+        )
         if translation:
-            transcript_payload = translate_transcription_payload(transcript_payload)
+            transcript_payload = translate_transcription_payload(
+                transcript_payload, media_format
+            )
     finally:
         cleanup_path(audio_path)
 
@@ -2951,6 +4045,202 @@ async def ffmpeg_upload(
     return response
 
 
+def _owned_job(request: Request, job_id: str) -> jobs_mod.Job:
+    job = _job_store.get(job_id)
+    if job is None or job.owner_id != request.state.owner_id:
+        raise HTTPException(status_code=404, detail="Trabajo no encontrado")
+    return job
+
+
+def _validate_transcription_job(
+    media_format: str,
+    transcription_model: Optional[str],
+    diarize: bool,
+) -> Tuple[str, str, bool, bool]:
+    if not OCABRA_EXTENSIONS:
+        raise HTTPException(
+            status_code=503,
+            detail="Los trabajos Batch requieren OCABRA_EXTENSIONS=true.",
+        )
+    normalized = normalize_media_format(media_format)
+    if normalized not in TRANSCRIPTION_FORMATS:
+        raise HTTPException(status_code=400, detail="Formato de transcripción no soportado")
+    effective_diarize = diarize or is_diarization_format(normalized)
+    try:
+        model = (
+            resolve_diarization_model(transcription_model)
+            if effective_diarize
+            else resolve_transcription_model(transcription_model)
+        )
+    except DownloadError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    translate = is_translation_format(normalized)
+    if translate:
+        # Mismo criterio que la ruta síncrona: así un TRANSLATION_MODEL que
+        # apunte a un whisper se rechaza al crear el trabajo y no después de
+        # haber pagado la transcripción.
+        try:
+            resolve_translation_model()
+        except DownloadError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return normalized, model, effective_diarize, translate
+
+
+def _new_transcription_job(
+    request: Request,
+    *,
+    media_format: str,
+    model: str,
+    diarize: bool,
+    translate: bool,
+    source_name: str,
+    url: Optional[str] = None,
+) -> jobs_mod.Job:
+    job = jobs_mod.new_job(
+        "transcription_batch",
+        {},
+        owner_id=request.state.owner_id,
+    )
+    workdir = JOBS_DIR / job.id
+    workdir.mkdir(parents=True, exist_ok=True)
+    job.params.update(
+        {
+            "job_id": job.id,
+            "workdir": str(workdir),
+            "stage": "prepare",
+            "phase": "queued",
+            "media_format": media_format,
+            "model": model,
+            "diarize": diarize,
+            "translate": translate,
+            "source_name": source_name,
+            "url": url,
+            "remote_file_ids": [],
+        }
+    )
+    job.metadata = {
+        "title": source_name,
+        "media_format": media_format,
+        "transcription_model": model,
+        "diarization": diarize,
+        "translation": translate,
+    }
+    return job
+
+
+@app.post("/api/jobs/transcription/url", status_code=202)
+async def transcription_job_from_url(
+    request: Request,
+    payload: Dict[str, Any] = Body(...),
+):
+    url = str(payload.get("url") or "").strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="Incluye una URL válida")
+    normalized, model, diarize, translate = _validate_transcription_job(
+        str(payload.get("format") or payload.get("media_format") or "transcript_text"),
+        str(payload.get("transcription_model") or "").strip() or None,
+        parse_bool_flag(payload.get("diarize")),
+    )
+    job = _new_transcription_job(
+        request,
+        media_format=normalized,
+        model=model,
+        diarize=diarize,
+        translate=translate,
+        source_name=url,
+        url=url,
+    )
+    _batch_job_queue.submit(job)
+    return JSONResponse(job.public(), status_code=202)
+
+
+@app.post("/api/jobs/transcription/upload", status_code=202)
+async def transcription_job_from_upload(
+    request: Request,
+    media_format: str = Form("transcript_text"),
+    transcription_model: str = Form(""),
+    diarize: str = Form("false"),
+    file: UploadFile = File(...),
+):
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Incluye un archivo de audio o vídeo")
+    normalized, model, effective_diarize, translate = _validate_transcription_job(
+        media_format,
+        transcription_model.strip() or None,
+        parse_bool_flag(diarize),
+    )
+    job = _new_transcription_job(
+        request,
+        media_format=normalized,
+        model=model,
+        diarize=effective_diarize,
+        translate=translate,
+        source_name=file.filename,
+    )
+    temporary = await save_upload_file(file)
+    suffix = Path(file.filename).suffix or temporary.suffix or ".bin"
+    source = Path(job.params["workdir"]) / f"source{suffix}"
+    shutil.move(str(temporary), source)
+    job.params["source"] = str(source)
+    _batch_job_queue.submit(job)
+    return JSONResponse(job.public(), status_code=202)
+
+
+@app.get("/api/jobs", response_class=JSONResponse)
+async def jobs_list(request: Request):
+    _job_store.purge_expired(cleanup_dir)
+    return {
+        "ttl_seconds": jobs_mod.JOB_TTL_SECONDS,
+        "jobs": [
+            job.public()
+            for job in _job_store.list(owner_id=request.state.owner_id)
+        ],
+    }
+
+
+@app.get("/api/jobs/{job_id}", response_class=JSONResponse)
+async def job_status(request: Request, job_id: str):
+    return _owned_job(request, job_id).public()
+
+
+@app.get("/api/jobs/{job_id}/download")
+async def job_download(request: Request, job_id: str):
+    job = _owned_job(request, job_id)
+    if job.status != jobs_mod.STATUS_DONE or not job.result_path:
+        raise HTTPException(
+            status_code=409,
+            detail=f"El trabajo está en estado '{job.status}'",
+        )
+    path = Path(job.result_path)
+    if not path.exists():
+        raise HTTPException(status_code=410, detail="El resultado ya no está disponible")
+    if job.kind == "transcription_batch":
+        await run_in_threadpool(
+            record_download_event,
+            str(job.metadata.get("media_format") or "transcript_text"),
+            False,
+            job.metadata.get("transcription_stats"),
+            detect_request_source(request),
+        )
+    return FileResponse(
+        path,
+        filename=job.result_name or path.name,
+        media_type=media_type_for_format(str(job.metadata.get("media_format") or "")),
+    )
+
+
+@app.delete("/api/jobs/{job_id}", response_class=JSONResponse)
+async def job_cancel_or_delete(request: Request, job_id: str):
+    job = _owned_job(request, job_id)
+    if job.status in jobs_mod.TERMINAL_STATUSES:
+        _job_store.remove(job.id, cleanup_dir)
+        return {"status": "deleted"}
+    job.cancel_requested = True
+    job.params["phase"] = "cancelling"
+    _job_store.persist(job)
+    return {"status": "cancelling"}
+
+
 @app.get("/api/upscale/models", response_class=JSONResponse)
 async def upscale_models():
     """Modelos de escalado disponibles, con el aviso de tiempo para la UI.
@@ -3051,7 +4341,13 @@ async def upscale_job_create(
             "filename": file.filename or "upscaled",
         },
         estimate_seconds=estimate,
+        owner_id=request.state.owner_id,
     )
+    job.metadata = {
+        "title": file.filename or "Vídeo mejorado",
+        "media_format": format_value,
+        "upscale_model": selected,
+    }
     _job_queue.submit(job)
     await run_in_threadpool(
         record_download_event, format_value, False, None, detect_request_source(request)
@@ -3063,15 +4359,21 @@ async def upscale_job_create(
 
 
 @app.get("/api/upscale/jobs", response_class=JSONResponse)
-async def upscale_job_list():
+async def upscale_job_list(request: Request):
     _job_store.purge_expired(upscale_mod.cleanup_workdir)
-    return {"jobs": [job.public() for job in _job_store.list()]}
+    return {
+        "jobs": [
+            job.public()
+            for job in _job_store.list(owner_id=request.state.owner_id)
+            if job.kind == "upscale"
+        ]
+    }
 
 
 @app.get("/api/upscale/jobs/{job_id}", response_class=JSONResponse)
-async def upscale_job_status(job_id: str):
-    job = _job_store.get(job_id)
-    if job is None:
+async def upscale_job_status(request: Request, job_id: str):
+    job = _owned_job(request, job_id)
+    if job.kind != "upscale":
         raise HTTPException(status_code=404, detail="Trabajo no encontrado")
     payload = job.public()
     payload["estimate_human"] = upscale_mod.format_duration_es(job.estimate_seconds)
@@ -3079,9 +4381,9 @@ async def upscale_job_status(job_id: str):
 
 
 @app.get("/api/upscale/jobs/{job_id}/download")
-async def upscale_job_download(job_id: str):
-    job = _job_store.get(job_id)
-    if job is None:
+async def upscale_job_download(request: Request, job_id: str):
+    job = _owned_job(request, job_id)
+    if job.kind != "upscale":
         raise HTTPException(status_code=404, detail="Trabajo no encontrado")
     if job.status != jobs_mod.STATUS_DONE or not job.result_path:
         raise HTTPException(
@@ -3106,9 +4408,9 @@ async def upscale_job_download(job_id: str):
 
 
 @app.delete("/api/upscale/jobs/{job_id}", response_class=JSONResponse)
-async def upscale_job_cancel(job_id: str):
-    job = _job_store.get(job_id)
-    if job is None:
+async def upscale_job_cancel(request: Request, job_id: str):
+    job = _owned_job(request, job_id)
+    if job.kind != "upscale":
         raise HTTPException(status_code=404, detail="Trabajo no encontrado")
     if job.status in jobs_mod.TERMINAL_STATUSES:
         if job.result_path:
@@ -3237,10 +4539,14 @@ async def transcribe_upload(
                 requested_model,
                 effective_diarize,
             )
+            payload = await run_in_threadpool(
+                prepare_transcription_payload, payload, format_value
+            )
             if translation_enabled:
                 payload = await run_in_threadpool(
                     translate_transcription_payload,
                     payload,
+                    format_value,
                 )
         finally:
             try:
@@ -3281,15 +4587,40 @@ TRANSLATION_MODEL = os.getenv("TRANSLATION_MODEL")
 # por segmento (152 en un vídeo de 8 minutos), que era el cuello de botella.
 TRANSLATION_BATCH_SIZE = max(1, int(os.getenv("TRANSLATION_BATCH_SIZE", "8")))
 TRANSLATION_CONCURRENCY = max(1, int(os.getenv("TRANSLATION_CONCURRENCY", "4")))
+TRANSLATION_MAX_TOKENS = max(1, int(os.getenv("TRANSLATION_MAX_TOKENS", "4096")))
+TRANSLATION_BATCH_MAX_TOKENS = max(
+    64, int(os.getenv("TRANSLATION_BATCH_MAX_TOKENS", "512"))
+)
+TRANSLATION_REASONING_EFFORT = os.getenv("TRANSLATION_REASONING_EFFORT", "").strip()
 TRANSLATION_SYSTEM_PROMPT = os.getenv(
     "TRANSLATION_SYSTEM_PROMPT",
-    "Eres un traductor profesional. Tu única tarea es traducir el texto al español de forma directa y precisa. "
-    "NO resumas, NO razones, NO expliques, NO añadas comentarios. "
-    "Mantén el significado exacto, el tono y la estructura del texto original. "
+    "Eres un traductor profesional de subtítulos. Tu única tarea es traducir al español de España "
+    "de forma directa y precisa. NO resumas, NO razones, NO expliques, NO añadas comentarios. "
+    "Mantén el significado exacto, el tono y el registro oral del original. "
+    "Es una transcripción automática sin puntuar: puntúa la traducción con normalidad "
+    "(comas, puntos y signos de interrogación) para que se lea bien como subtítulo. "
+    "No completes ni reordenes frases cortadas: traduce solo lo que haya en cada línea. "
+    "Escribe las cifras con el formato español (30.000, no 30,000). "
     "No uses Markdown ni ningún otro formato: el resultado va a subtítulos en texto plano. "
     "Devuelve ÚNICAMENTE el texto traducido, nada más."
 )
 TRANSLATION_USER_PROMPT_TEMPLATE = os.getenv(
     "TRANSLATION_USER_PROMPT_TEMPLATE",
     "Traduce el siguiente texto al español:\n\n{text}"
+)
+# El TXT plano se traduce por bloques de texto corrido en vez de segmento a
+# segmento: así el modelo puntúa y separa párrafos, que es lo que se espera de
+# un documento. El SRT y el JSON siguen yendo por segmentos para no desalinear.
+TRANSLATION_PROSE_TEXT = _env_flag("TRANSLATION_PROSE_TEXT", True)
+TRANSLATION_PROSE_WORDS = max(50, int(os.getenv("TRANSLATION_PROSE_WORDS", "900")))
+TRANSLATION_PROSE_SYSTEM_PROMPT = os.getenv(
+    "TRANSLATION_PROSE_SYSTEM_PROMPT",
+    "Eres un traductor profesional. Traduce al español de España el texto que recibas. "
+    "Es la transcripción de un vídeo hablado y puede venir sin puntuar: restaura la "
+    "puntuación y separa en párrafos donde corresponda. "
+    "NO resumas, NO omitas nada, NO añadas comentarios ni titulares. "
+    "Mantén el registro y el tono del original, y trata al oyente de tú, no de usted: "
+    "los bloques se traducen por separado y el tratamiento tiene que ser el mismo en todos. "
+    "Escribe las cifras con el formato español (30.000, no 30,000). "
+    "No uses Markdown. Devuelve ÚNICAMENTE el texto traducido, nada más."
 )

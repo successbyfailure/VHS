@@ -110,6 +110,35 @@ def test_un_reinicio_no_deja_trabajos_colgados():
     assert "reinició" in (recargado.error or "")
 
 
+def test_un_batch_se_reencola_tras_reinicio():
+    store = _store()
+    job = jobs.new_job(
+        "transcription_batch",
+        {"stage": "transcribing", "transcription_batch_id": "batch-1"},
+        owner_id="sesion-a",
+    )
+    job.status = jobs.STATUS_RUNNING
+    store.add(job)
+
+    recargado = jobs.JobStore(store.directory).get(job.id)
+    assert recargado is not None
+    assert recargado.status == jobs.STATUS_QUEUED
+    assert recargado.params["transcription_batch_id"] == "batch-1"
+
+
+def test_los_trabajos_se_aislan_por_propietario():
+    store = _store()
+    propio = jobs.new_job("upscale", {}, owner_id="sesion-a")
+    ajeno = jobs.new_job("upscale", {}, owner_id="sesion-b")
+    store.add(propio)
+    store.add(ajeno)
+
+    assert [item.id for item in store.list(owner_id="sesion-a")] == [propio.id]
+    vista = propio.public()
+    assert "owner_id" not in vista
+    assert "params" not in vista
+
+
 def test_el_ttl_limpia_los_terminados_y_respeta_los_vivos():
     store = _store()
     viejo = jobs.new_job("upscale", {})

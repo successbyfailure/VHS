@@ -395,6 +395,7 @@
         <button class="tab-button" data-tab="transcribe-tab" data-i18n="tab-transcribe">Transcribir</button>
         <button class="tab-button" data-tab="ffmpeg-tab">FFMPEG</button>
         <button class="tab-button" data-tab="upscale-tab" data-i18n="tab-upscale">Mejorar resolución</button>
+        <button class="tab-button" data-tab="jobs-tab" data-i18n="tab-jobs">Mis trabajos</button>
         <button class="tab-button" data-tab="stats-tab" data-i18n="tab-stats">Estadísticas</button>
       </div>
 
@@ -653,6 +654,22 @@
         </section>
       </section>
 
+      <section class="tab-panel hidden" id="jobs-tab">
+        <section class="panel">
+          <div class="panel-header">
+            <div>
+              <h2 data-i18n="jobs-title">Mis trabajos</h2>
+              <p class="hint" data-i18n="jobs-hint">Puedes cerrar esta página y volver más tarde. Los resultados se conservan durante 24 horas.</p>
+            </div>
+            <button class="ghost-button" id="refresh-jobs" data-i18n="btn-refresh">Actualizar</button>
+          </div>
+          <div id="jobs-content" class="cache-list">
+            <p class="hint">Cargando trabajos…</p>
+          </div>
+          <p class="panel-status" id="jobs-status"></p>
+        </section>
+      </section>
+
       <section class="tab-panel hidden" id="stats-tab">
         <section class="panel">
           <div class="panel-header">
@@ -808,6 +825,9 @@
       const formatProfileSelect = document.getElementById('format-profile');
       const downloadTranscriptionModelWrap = document.getElementById('download-transcription-model-wrap');
       const downloadTranscriptionModelSelect = document.getElementById('download-transcription-model');
+      const jobsContent = document.getElementById('jobs-content');
+      const jobsStatus = document.getElementById('jobs-status');
+      const refreshJobsButton = document.getElementById('refresh-jobs');
       let usageChart;
       const tabs = document.querySelectorAll('.tab-button');
 
@@ -816,7 +836,7 @@
         es: {
           'hero-desc': 'VHS es un descargador de videos online con alma ochentera: usa <a href="https://github.com/yt-dlp/yt-dlp" target="_blank" rel="noreferrer">yt-dlp</a> + <code>ffmpeg</code> para bajar clips, extraer audio, generar transcripciones y subtítulos, o recodificar ficheros sin despeinarte.',
           'services-title': 'Servicios soportados',
-          'tab-download': 'Descargar', 'tab-transcribe': 'Transcribir', 'tab-stats': 'Estadísticas',
+          'tab-download': 'Descargar', 'tab-transcribe': 'Transcribir', 'tab-jobs': 'Mis trabajos', 'tab-stats': 'Estadísticas',
           'url-label': 'URL del vídeo', 'url-ph': 'https://',
           'type-label': 'Tipo', 'type-video': 'Video', 'type-audio': 'Audio', 'type-transcript': 'Transcripción',
           'profile-label': 'Perfil', 'btn-download': 'Descargar',
@@ -830,6 +850,12 @@
           'label-video-url': 'URL del vídeo',
           'label-file': 'Archivo', 'label-format': 'Formato', 'btn-transcribe': 'Transcribir archivo',
           'btn-transcribe-url': 'Transcribir URL',
+          'jobs-title': 'Mis trabajos',
+          'jobs-hint': 'Puedes cerrar esta página y volver más tarde. Los resultados se conservan durante 24 horas.',
+          'jobs-empty': 'Todavía no tienes trabajos.',
+          'jobs-download': 'Descargar', 'jobs-cancel': 'Cancelar', 'jobs-delete': 'Eliminar',
+          'jobs-created': 'Trabajo creado. Puedes seguirlo en «Mis trabajos».',
+          'jobs-error': 'No se pudieron consultar los trabajos.',
           'label-transcription-model': 'Modelo de transcripción',
           'ffmpeg-panel-title': 'Operaciones con ffmpeg',
           'ffmpeg-panel-hint': 'Convierte un archivo local con los presets <code>ffmpeg_*</code>. Ideal para generar masters ligeros sin salir del navegador.',
@@ -896,7 +922,7 @@
         en: {
           'hero-desc': 'VHS is an online video downloader with an 80s soul: it uses <a href="https://github.com/yt-dlp/yt-dlp" target="_blank" rel="noreferrer">yt-dlp</a> + <code>ffmpeg</code> to download clips, extract audio, generate transcriptions and subtitles, or re-encode files without breaking a sweat.',
           'services-title': 'Supported services',
-          'tab-download': 'Download', 'tab-transcribe': 'Transcribe', 'tab-stats': 'Stats',
+          'tab-download': 'Download', 'tab-transcribe': 'Transcribe', 'tab-jobs': 'My jobs', 'tab-stats': 'Stats',
           'url-label': 'Video URL', 'url-ph': 'https://',
           'type-label': 'Type', 'type-video': 'Video', 'type-audio': 'Audio', 'type-transcript': 'Transcription',
           'profile-label': 'Profile', 'btn-download': 'Download',
@@ -910,6 +936,12 @@
           'label-video-url': 'Video URL',
           'label-file': 'File', 'label-format': 'Format', 'btn-transcribe': 'Transcribe file',
           'btn-transcribe-url': 'Transcribe URL',
+          'jobs-title': 'My jobs',
+          'jobs-hint': 'You can close this page and return later. Results are kept for 24 hours.',
+          'jobs-empty': 'You do not have any jobs yet.',
+          'jobs-download': 'Download', 'jobs-cancel': 'Cancel', 'jobs-delete': 'Delete',
+          'jobs-created': 'Job created. You can follow it under “My jobs”.',
+          'jobs-error': 'Could not retrieve jobs.',
           'label-transcription-model': 'Transcription model',
           'ffmpeg-panel-title': 'ffmpeg operations',
           'ffmpeg-panel-hint': 'Convert a local file using <code>ffmpeg_*</code> presets. Great for lightweight masters without leaving the browser.',
@@ -1488,6 +1520,20 @@
             }
           }
           try {
+            if (detectTranscription && format.startsWith('transcript')) {
+              const response = await fetch('/api/jobs/transcription/url', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+              });
+              const job = await response.json().catch(() => ({}));
+              if (!response.ok) throw new Error(job.detail || t('jobs-error'));
+              tracker.complete(t('jobs-created'));
+              statusElement.textContent = t('jobs-created');
+              await loadJobsPanel();
+              activateTab('jobs-tab');
+              return;
+            }
             await downloadFromEndpoint(`/api/download`, {
               statusTarget: statusElement,
               progress: tracker,
@@ -1733,16 +1779,20 @@
         uploadProgress.start(getProgressSteps().transcription);
         uploadStatusEl.textContent = getProgressSteps().transcription[0] || '…';
         try {
-          await downloadFromEndpoint('/api/transcribe/upload', {
-            statusTarget: uploadStatusEl,
-            progress: uploadProgress,
-            fetchOptions: {
-              method: 'POST',
-              body: formData,
-            },
+          const response = await fetch('/api/jobs/transcription/upload', {
+            method: 'POST',
+            body: formData,
           });
+          const job = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(job.detail || t('jobs-error'));
+          uploadProgress.complete(t('jobs-created'));
+          uploadStatusEl.textContent = t('jobs-created');
+          uploadForm.reset();
+          await loadJobsPanel();
+          activateTab('jobs-tab');
         } catch (error) {
-          console.error(error);
+          uploadProgress.fail(error.message || t('jobs-error'));
+          uploadStatusEl.textContent = error.message || t('jobs-error');
         }
       });
 
@@ -1767,6 +1817,156 @@
         const days = Math.floor(hours / 24);
         return `${days} d`;
       }
+
+      const JOB_PHASES = {
+        queued: { es: 'En cola', en: 'Queued' },
+        preparing: { es: 'Preparando audio', en: 'Preparing audio' },
+        transcribing: { es: 'Transcribiendo en oCabra', en: 'Transcribing in oCabra' },
+        transcribed: { es: 'Transcripción terminada', en: 'Transcription complete' },
+        translating: { es: 'Traduciendo en oCabra', en: 'Translating in oCabra' },
+        translated: { es: 'Traducción terminada', en: 'Translation complete' },
+        ready: { es: 'Listo', en: 'Ready' },
+        cancelling: { es: 'Cancelando', en: 'Cancelling' },
+      };
+
+      const BATCH_LIVE_PHASES = {
+        queued: { es: 'En cola en oCabra', en: 'Queued in oCabra' },
+        starting: { es: 'Arrancando el lote', en: 'Starting the batch' },
+        loading_model: { es: 'Cargando el modelo', en: 'Loading the model' },
+        running: { es: 'Procesando en oCabra', en: 'Processing in oCabra' },
+        yielding_to_interactive: { es: 'Cediendo paso a tráfico interactivo', en: 'Yielding to interactive traffic' },
+        waiting_for_vram: { es: 'Esperando memoria de GPU', en: 'Waiting for GPU memory' },
+        finalizing: { es: 'Escribiendo resultados', en: 'Writing results' },
+        cancelling: { es: 'Parando el lote', en: 'Stopping the batch' },
+      };
+
+      function formatWait(seconds) {
+        if (!Number.isFinite(seconds) || seconds <= 0) return '';
+        if (seconds < 60) return `~${Math.round(seconds)} s`;
+        return `~${Math.round(seconds / 60)} min`;
+      }
+
+      function jobLiveStatus(job) {
+        if (['done', 'error', 'cancelled'].includes(job.status)) return '';
+        const partes = [];
+        const fase = BATCH_LIVE_PHASES[job.live_phase];
+        if (fase) {
+          let texto = fase[currentLang] || job.live_phase;
+          if (job.live_phase === 'queued' && job.queue_position > 0) {
+            texto += currentLang === 'es'
+              ? ` · ${job.queue_position} delante`
+              : ` · ${job.queue_position} ahead`;
+          }
+          if (job.live_phase === 'loading_model') {
+            const espera = formatWait(job.expected_wait_seconds);
+            if (espera) texto += ` · ${espera}`;
+          }
+          partes.push(texto);
+        } else if (job.detail) {
+          partes.push(job.detail);
+        }
+        if (job.batch_total > 0 && job.batch_completed < job.batch_total) {
+          partes.push(currentLang === 'es'
+            ? `${job.batch_completed}/${job.batch_total} peticiones`
+            : `${job.batch_completed}/${job.batch_total} requests`);
+        }
+        return partes.join(' · ');
+      }
+
+      function jobPhase(job) {
+        if (job.status === 'done') return currentLang === 'es' ? 'Listo' : 'Ready';
+        if (job.status === 'error') return currentLang === 'es' ? 'Error' : 'Error';
+        if (job.status === 'cancelled') return currentLang === 'es' ? 'Cancelado' : 'Cancelled';
+        const phase = JOB_PHASES[job.phase];
+        return phase?.[currentLang] || job.status;
+      }
+
+      async function removeJob(job) {
+        const response = await fetch(`/api/jobs/${job.id}`, { method: 'DELETE' });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.detail || t('jobs-error'));
+        await loadJobsPanel();
+      }
+
+      function renderJobs(payload) {
+        jobsContent.innerHTML = '';
+        const jobs = payload.jobs || [];
+        if (!jobs.length) {
+          const empty = document.createElement('p');
+          empty.className = 'hint';
+          empty.textContent = t('jobs-empty');
+          jobsContent.appendChild(empty);
+          return;
+        }
+        jobs.forEach((job) => {
+          const entry = document.createElement('div');
+          entry.className = 'cache-item';
+          const title = document.createElement('strong');
+          title.textContent = job.metadata?.title || (job.kind === 'upscale' ? 'Upscale' : 'Transcripción');
+          const meta = document.createElement('div');
+          meta.className = 'cache-meta';
+          const status = document.createElement('span');
+          const pct = job.progress > 0 && job.progress < 1 ? ` · ${Math.round(job.progress * 100)}%` : '';
+          status.textContent = `${jobPhase(job)}${pct}`;
+          if (job.detail) status.title = job.detail;
+          const format = document.createElement('span');
+          format.textContent = job.metadata?.media_format || job.kind;
+          const age = document.createElement('span');
+          age.textContent = formatAge(Math.max(0, Date.now() / 1000 - job.created_at));
+          meta.append(status, format, age);
+          entry.append(title, meta);
+          const vivo = jobLiveStatus(job);
+          if (vivo) {
+            const linea = document.createElement('p');
+            linea.className = 'hint';
+            linea.textContent = vivo;
+            if (job.detail) linea.title = job.detail;
+            entry.appendChild(linea);
+          }
+          if (job.error) {
+            const error = document.createElement('p');
+            error.className = 'panel-status';
+            error.textContent = job.error;
+            entry.appendChild(error);
+          }
+          const actions = document.createElement('div');
+          actions.className = 'cache-actions';
+          if (job.ready) {
+            const download = document.createElement('button');
+            download.className = 'ghost-button';
+            download.textContent = t('jobs-download');
+            download.addEventListener('click', () => downloadFromEndpoint(`/api/jobs/${job.id}/download`, { statusTarget: jobsStatus }));
+            actions.appendChild(download);
+          }
+          const remove = document.createElement('button');
+          remove.className = 'ghost-button danger';
+          remove.textContent = ['done', 'error', 'cancelled'].includes(job.status) ? t('jobs-delete') : t('jobs-cancel');
+          remove.addEventListener('click', async () => {
+            try { await removeJob(job); } catch (error) { jobsStatus.textContent = error.message; }
+          });
+          actions.appendChild(remove);
+          entry.appendChild(actions);
+          jobsContent.appendChild(entry);
+        });
+      }
+
+      async function loadJobsPanel() {
+        if (!jobsContent) return;
+        try {
+          const response = await fetch('/api/jobs');
+          if (!response.ok) throw new Error(t('jobs-error'));
+          const payload = await response.json();
+          renderJobs(payload);
+          const ttlHours = Math.round((payload.ttl_seconds || 0) / 3600);
+          jobsStatus.textContent = `${payload.jobs.length} · TTL ${ttlHours} h`;
+        } catch (error) {
+          jobsStatus.textContent = error.message || t('jobs-error');
+        }
+      }
+
+      refreshJobsButton?.addEventListener('click', loadJobsPanel);
+      loadJobsPanel();
+      setInterval(loadJobsPanel, 10000);
 
       async function deleteCacheItem(item) {
         const name = item.title || item.cache_key;

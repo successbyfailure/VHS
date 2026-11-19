@@ -55,20 +55,34 @@ YTDLP_EXTRACTOR_ARGS={"youtube": ["player_client=default"]}
 
 #### Transcripción
 ```bash
-# OpenAI-compatible endpoint
-TRANSCRIPTION_ENDPOINT=https://api.openai.com/v1
+# oCabra (contrato OpenAI-compatible)
+TRANSCRIPTION_ENDPOINT=https://ocabra.mksmad.org/v1
 TRANSCRIPTION_API_KEY=sk-...
-TRANSCRIPTION_MODEL=whisper-large-v3-turbo
-TRANSCRIPTION_MODELS=whisper-large-v3-turbo - best, faster-whisper-large-v3-turbo-latam-int8-ct2 - Español (rápido), nvidia-parakeet-tdt-0.6b-v3 - solo texto (sin marcas de tiempo), faster-whisper-base - ligero (menor precisión)
-DIARIZATION_MODEL=whisper-large-v3-turbo-diarized
-DIARIZATION_MODELS=whisper-large-v3-turbo-diarized - best (diarized), faster-whisper-large-v3-turbo-latam-int8-ct2-diarized - Español (diarized), faster-whisper-base-diarized - ligero (diarized)
+OCABRA_EXTENSIONS=true
+TRANSCRIPTION_MODEL=recomendado-stt
+TRANSCRIPTION_MODELS=recomendado-stt - Recomendado (modelo caliente), whisper-large-v3-turbo - Máxima precisión y velocidad, faster-whisper-large-v3 - Alternativa
+DIARIZATION_MODEL=recomendado-stt
+DIARIZATION_MODELS=recomendado-stt - Recomendado con hablantes, whisper-large-v3-turbo - Máxima calidad con hablantes, faster-whisper-large-v3 - Alternativa con hablantes
+TRANSCRIPTION_VAD_FILTER=true
+TRANSCRIPTION_CONDITION_ON_PREVIOUS_TEXT=false
+OPENAI_TIMEOUT_SECONDS=900
+OPENAI_MAX_RETRIES=3
+JOB_TTL_SECONDS=86400
+SESSION_COOKIE_MAX_AGE=2592000
+BATCH_JOB_CONCURRENCY=4
+BATCH_POLL_SECONDS=2
 
 # Traducción con LLM (opcional para utilidades como el bot de Telegram)
-TRANSLATION_MODEL=gemma4:12b-vllm-ctx64k
-SUMMARY_MODEL=gemma4:12b-vllm-ctx64k
-# Segmentos por petición y lotes en paralelo (vLLM agrupa; ollama serializa)
+TRANSLATION_MODEL=recomendado-ha-chatbots
+TRANSLATION_REASONING_EFFORT=off
+TRANSLATION_MAX_TOKENS=4096
+TRANSLATION_BATCH_MAX_TOKENS=512
+SUMMARY_MODEL=recomendado-ha-chatbots
+SUMMARY_REASONING_EFFORT=off
+SUMMARY_MAX_TOKENS=512
+# Segmentos por petición y lotes en paralelo (oCabra publica cuatro slots)
 TRANSLATION_BATCH_SIZE=8
-TRANSLATION_CONCURRENCY=8
+TRANSLATION_CONCURRENCY=4
 # TRANSLATION_SYSTEM_PROMPT=... (opcional)
 # TRANSLATION_USER_PROMPT_TEMPLATE=... (opcional)
 ```
@@ -87,6 +101,9 @@ TRANSLATION_CONCURRENCY=8
 - Provider: OpenAI-compatible (modelo configurable)
 - Formatos: JSON (completo), SRT (subtítulos), TXT (texto plano)
 - Word-level timestamps y scores de confianza
+- En oCabra, `diarize`, `vad_filter` y `condition_on_previous_text` se envían
+  como parámetros explícitos; no es necesario duplicar pesos con perfiles
+  distintos para activar la identificación de hablantes.
 
 ### ✅ Conversión con FFmpeg
 - Perfiles: 480p, 720p, 1080p, 1440p, 4K
@@ -236,16 +253,165 @@ se lanzan en paralelo (`TRANSLATION_CONCURRENCY`). Si el modelo no respeta la
 numeración pedida, ese lote se reintenta segmento a segmento: es preferible ir
 lento a desplazar los subtítulos.
 
-El backend del modelo manda. Medido sobre el endpoint, lotes de 8 segmentos:
+El router `recomendado-ha-chatbots` evita fijar un backend y prefiere un modelo
+ya cargado. Se usan como máximo cuatro lotes simultáneos, que coincide con los
+slots publicados por oCabra; superar esa cifra solo añade cola o respuestas
+`429`. La traducción desactiva el razonamiento porque es una transformación
+directa, y limita la salida para controlar latencia y consumo.
 
-| modelo | backend | 1 hilo | 8 hilos |
-|---|---|---|---|
-| `ministral-3:14b` | ollama | 1.7 seg/s | 1.9 seg/s |
-| `gemma4:12b-vllm-ctx64k` | vLLM | 3.0 seg/s | **19.5 seg/s** |
+Un lote mal alineado no se detecta solo contando líneas: una línea de
+continuación o un número repetido cuadraban el recuento y colaban texto en el
+segmento equivocado. La respuesta tiene que ser exactamente la lista numerada
+que se pidió. Los segmentos sin texto (silencios que recorta el VAD, huecos de
+la diarización) no se mandan al modelo: pedirle traducir una cadena vacía
+devolvía vacío y abortaba el trabajo completo.
 
-ollama serializa las peticiones, así que subir la concurrencia no aporta nada;
-vLLM las agrupa y escala casi lineal. Con un modelo `*-vllm-*` la traducción de
-un vídeo de 8 minutos baja de 2m46s a ~20s (50s contando descarga y STT).
+Ojo al comparar tiempos entre pruebas: el arranque en frío del modelo son unos
+60 s y se los lleva la primera petición de cada proceso, así que domina
+cualquier medición que no empiece con el modelo ya caliente. Fijar un modelo
+concreto (`gemma4:12b`) lo paga; los routers `recomendado-*` prefieren un
+modelo ya cargado precisamente para evitarlo.
+
+Medido con `gemma4:12b` sobre 13,3 minutos de audio (144 segmentos): la
+transcripción por lote tarda 29 s y la traducción de los subtítulos 14 s con
+lotes de 8. El tamaño del lote apenas mueve el tiempo (15 s con 4, 16 s con 16)
+porque el cuello de botella son los cuatro slots y los tokens generados, no el
+número de peticiones; a partir de 32 el modelo empieza a reformatear cifras.
+`TRANSLATION_MAX_TOKENS` no afecta a la velocidad: entre 320 y 4.096 el tiempo
+se mueve en una décima. Lo que sí se nota es el **arranque en frío**, unos 60 s
+la primera petición si el modelo no está cargado.
+
+### Texto plano frente a subtítulos
+
+El TXT no lleva marcas de tiempo, así que no hay que preservar la alineación y
+se traduce por bloques de texto corrido (`TRANSLATION_PROSE_WORDS`, en paralelo
+hasta `TRANSLATION_CONCURRENCY`). El modelo restaura la puntuación y separa
+párrafos, que es lo que se espera de un documento; uniendo 144 segmentos con
+espacios el resultado arrastraba la falta de puntuación de Whisper. El SRT y el
+JSON siguen traduciéndose segmento a segmento.
+
+### Troceado de subtítulos
+
+Whisper devuelve segmentos de hasta 20 segundos. Volcados tal cual, 123 de los
+144 subtítulos del vídeo de prueba pasaban de 84 caracteres (el máximo de dos
+líneas de 42), con un máximo de 266, y además se emitían en una sola línea: la
+traducción al español solo expande 1,06x, el problema era el segmentado. Ahora
+se trocean a `SRT_MAX_LINES` x `SRT_MAX_LINE_CHARS` y el tiempo se reparte en
+proporción a los caracteres de cada trozo.
+
+El número de líneas se redondea al múltiplo del tamaño del subtítulo para que
+no sobre un trozo suelto: repartir 5 líneas en subtítulos de 2 dejaba una sola
+línea con una palabra y una fracción mínima de tiempo ("es" durante 0,11 s).
+Si pese a eso un subtítulo queda por debajo de `SRT_MIN_CUE_SECONDS` se le roba
+tiempo al anterior, siempre que al anterior le quede su propio mínimo. Con
+`SRT_SPLIT_CUES=false` se recupera el comportamiento anterior.
+
+#### Cortes por pausa en vez de a prorrata
+
+La transcripción pide `timestamp_granularities: ["segment", "word"]`
+(`TRANSCRIPTION_WORD_TIMESTAMPS`), que oCabra también sirve en los lotes: en el
+vídeo de prueba devuelve 2.475 palabras con `start` y `end`. Con ellas los
+subtítulos se cortan donde el hablante hace una pausa o cierra una frase, y
+cada subtítulo arranca y acaba en el tiempo real de su primera y su última
+palabra.
+
+Repartir el tiempo del segmento en proporción a los caracteres parecía
+suficiente, pero desfasa: medido sobre 276 subtítulos, el inicio se desviaba
+0,80 s de mediana, 3,08 s en el percentil 90 y hasta 5,08 s, con un 63% de los
+subtítulos desplazados más de medio segundo. Cortando por palabra el desfase es
+cero por construcción, y los cortes que caen en un signo de puntuación pasan
+del 4% al 10%.
+
+El precio es un CPS algo más alto (percentil 90 de 23,9 frente a 21,4): el
+prorrateo repartía también los silencios internos del segmento, así que
+inflaba la duración de cada subtítulo y bajaba el CPS a costa de que el texto
+no coincidiera con lo que se oye. Para recuperar algo de tiempo de lectura, un
+subtítulo se alarga hasta `SRT_CUE_MAX_EXTENSION` segundos dentro del silencio
+que le sigue, dejando `SRT_CUE_GAP_SECONDS` de separación.
+
+La re-segmentación se hace **antes** de traducir (`prepare_transcription_payload`),
+así que cada subtítulo es también la unidad que se traduce y la alineación no
+depende de que el texto en español mida lo mismo que el original. Si el modelo
+no devuelve palabras, el payload se queda igual y el SRT cae al troceado por
+caracteres.
+
+Para los formatos que se traducen, el corte se hace a `TRANSLATION_EXPANSION`
+veces menos caracteres (1,18 por defecto): cortando al tope, la traducción ya
+no entraba en dos líneas y había que volver a partirla a prorrata, perdiendo la
+sincronía recién ganada. Con margen, los 287 subtítulos del vídeo de prueba
+llegan al SRT sin una sola re-partición.
+
+El reparto en líneas se calcula con programación dinámica, probando todos los
+puntos de corte y quedándose con el más parejo. Un reparto voraz dejaba una
+línea de más —y por tanto un subtítulo huérfano— en los textos que solo caben
+en dos líneas si la primera no se llena hasta el tope.
+
+Para revisar modelos, métricas y cambios del servidor consulta
+[`/docs/models`](https://ocabra.mksmad.org/docs/models) y
+[`/docs/changelog`](https://ocabra.mksmad.org/docs/changelog). El router
+`recomendado-stt` elige el mejor perfil disponible sin pagar un arranque en
+frío innecesario; actualmente prioriza `whisper-large-v3-turbo`.
+
+### Trabajos persistentes y Batch
+
+Las transcripciones solicitadas desde el portal se crean como trabajos y
+responden inmediatamente con `202 Accepted`. VHS asigna al navegador una cookie
+anónima `HttpOnly` y muestra únicamente los trabajos que pertenecen a esa
+sesión. El usuario puede cerrar la pestaña y volver después para descargar el
+resultado.
+
+El pipeline usa la extensión Batch de oCabra en dos fases:
+
+1. El audio se sube a `/v1/files` con `purpose=batch_input_audio` y se procesa
+   mediante un lote de `/v1/audio/transcriptions`.
+2. Si se pidió traducción, los segmentos se agrupan en lotes de
+   `TRANSLATION_BATCH_SIZE` y se envían en un segundo lote a
+   `/v1/chat/completions`, correlacionados mediante `custom_id`. Mandar un
+   segmento por petición costaba 144 peticiones y 18.700 tokens de entrada en
+   un vídeo de 13 minutos (el prompt de sistema repetido 144 veces); agrupados
+   son 18 peticiones y 7.400 tokens de entrada. El `custom_id`
+   (`group-<posición>-<cuántos>`) codifica el tramo que lleva cada petición,
+   así que un trabajo reanudado reconstruye el mapeo sin guardar estado. Si un
+   lote vuelve mal alineado se repite segmento a segmento, igual que en la ruta
+   síncrona.
+
+oCabra ejecuta **un lote a la vez**: los demás esperan en cola y el campo
+`ocabra.queue_position` dice cuántos van delante. `BATCH_JOB_CONCURRENCY` solo
+reparte el trabajo local, no multiplica lo que el servidor atiende en paralelo.
+
+Desde oCabra 0.117.0 el objeto `Batch` está tipado en el esquema
+(`status` con sus ocho estados, `request_counts`, `output_file_id`,
+`error_file_id`, `total_tokens`) y trae la extensión `ocabra`
+(`BatchLiveStatus`) mientras el lote no ha terminado, que explica **por qué**
+está donde está: `phase` (`queued`, `starting`, `loading_model`, `running`,
+`yielding_to_interactive`, `waiting_for_vram`, `finalizing`, `cancelling`),
+`detail` como frase lista para una barra de progreso, `in_flight`, `waiting`,
+`preemptions`, `retry_in_seconds` y `models[].expected_wait_seconds`. Es la
+respuesta a los 65 s que un lote de traducción pasaba en 0 de 144 completadas
+sin decir que estaba cargando el modelo.
+
+El portal usa ese estado: `GET /api/jobs/{id}` devuelve `live_phase`, `detail`,
+`queue_position`, `expected_wait_seconds` y el par `batch_completed` /
+`batch_total`, y la interfaz traduce la fase (el `detail` de oCabra viene en
+inglés y se deja como tooltip). Medido contra un modelo descargado, el trabajo
+pasa de quedarse en 0% a mostrar «Cargando el modelo · ~36 s» con cuenta atrás.
+El estado solo se persiste cuando algo cambia, así que sondear cada
+`BATCH_POLL_SECONDS` no reescribe el trabajo en cada vuelta.
+
+Límites del servidor: **50 000 peticiones** por lote (`batch_too_large` si se
+pasa, `empty_batch` si no hay ninguna) y **512 MB** por fichero de entrada. Una
+línea mal formada hace que `POST /v1/batches` rechace el lote entero con un 400
+que lista hasta 20 errores en `error.errors`, cada uno con `line`, `code` y
+`message`; esos errores no llegan a `error_file_id`.
+
+Los identificadores externos se guardan con el trabajo. Tras reiniciar VHS, el
+servidor vuelve a consultar esos lotes en lugar de repetirlos. Cuando termina,
+VHS copia el resultado a su almacenamiento y elimina los ficheros remotos de
+oCabra. Los resultados locales se conservan `JOB_TTL_SECONDS` (24 horas por
+defecto); la cookie puede durar más, pero no prolonga la vida de los archivos.
+
+La cookie no es una cuenta y no permite recuperar trabajos desde otro navegador
+o después de borrar sus datos. Nunca contiene rutas, claves API ni resultados.
 
 ### Vídeo: NVENC frente a libx264
 
