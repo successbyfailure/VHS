@@ -121,6 +121,14 @@ por su propietario y devuelven `404` para trabajos de otra sesión.
 - `GET /api/jobs/{id}`: estado y progreso.
 - `GET /api/jobs/{id}/download`: descarga el resultado terminado.
 - `DELETE /api/jobs/{id}`: cancela un trabajo activo o elimina uno terminado.
+- `GET /api/images/upscale/models`: modelos de escalado de fotos, formatos de
+  salida y límites de entrada.
+- `POST /api/images/upscale`: crea un trabajo de escalado de foto (multipart
+  con `file`, y opcionales `model`, `output_format` png|jpeg|webp,
+  `output_quality`, `scale`, `target_width`, `target_height`). Responde `202`
+  con el trabajo; el estado y la descarga van por `/api/jobs/{id}`. Valida el
+  tamaño antes de subir la imagen al servidor: `400` si supera los límites o
+  si el modelo no está en `IMAGE_UPSCALE_MODELS`.
 - `POST /api/jobs/{id}/retry`: vuelve a encolar un trabajo con `error` o
   `cancelled`. Comprueba en oCabra el estado de los lotes que tenía: conserva
   los que terminaron bien y descarta los cancelados, caducados o que ya no se

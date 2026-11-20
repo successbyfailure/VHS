@@ -420,6 +420,30 @@ defecto); la cookie puede durar más, pero no prolonga la vida de los archivos.
 La cookie no es una cuenta y no permite recuperar trabajos desde otro navegador
 o después de borrar sus datos. Nunca contiene rutas, claves API ni resultados.
 
+### Fotos: escalado 4x
+
+oCabra escala la imagen y VHS solo valida y reenvía: no hay que trocear ni
+reensamblar nada, porque el worker trabaja por teselas de 512 px y devuelve la
+imagen completa. Medido con un fotograma real de 1920x1080 (salida 7680x4320):
+
+| Modelo | Tiempo | PNG |
+| --- | --- | --- |
+| `real-esrgan-compact-x4` | 6,9 s | 7,56 MB |
+| `remacri-x4` | 11,4 s | 5,73 MB |
+| `ultrasharp-x4` | 15,9 s | 8,06 MB |
+| `ultrasharp-v2-lite` | 16,8 s | 10,92 MB |
+| `realesrgan-x4plus` | 18,5 s | 10,25 MB |
+
+El caso límite de 3840x2160 a 4x (132 megapíxeles) tarda 45 s y devuelve un PNG
+de 35,6 MB. `output_format=webp` da el mismo resultado pesando catorce veces
+menos (0,73 MB frente a 10,25 MB), así que es la opción recomendable para
+descargar; PNG queda para quien no quiera pérdida.
+
+Va como trabajo aunque tarde menos de un minuto: así se puede cerrar la pestaña
+y recoger el resultado después, y el portal lo muestra en el mismo panel que el
+resto. Los límites de entrada (3840x2160 y 25 MB) se comprueban en VHS antes de
+subir la imagen, para no gastar el envío en algo que acabaría en un 413.
+
 ### Vídeo: NVENC frente a libx264
 
 Medido sobre una fuente 1080p AV1 de 8:29 (SSIM/PSNR sobre un tramo de 90 s):

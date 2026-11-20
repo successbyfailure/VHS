@@ -652,6 +652,42 @@
             <p class="status" id="upscale-status"></p>
           </form>
         </section>
+
+        <section class="panel">
+          <div class="panel-header">
+            <div>
+              <h2 data-i18n="photo-panel-title">Mejorar la resolución de una foto</h2>
+              <p class="hint" data-i18n="photo-panel-hint">
+                Sube una imagen y se devuelve a <strong>cuatro veces</strong> su tamaño. Cada modelo
+                indica cuánto tarda con una foto de 1920x1080; una de 4K tarda unos 45 segundos. El
+                máximo de entrada son 3840x2160 y 25 MB. En PNG no se pierde calidad, y WebP da el
+                mismo resultado pesando mucho menos.
+              </p>
+            </div>
+          </div>
+          <form id="photo-form" class="upload-form">
+            <div>
+              <label for="photo-file" data-i18n="label-file">Archivo</label>
+              <input type="file" id="photo-file" name="file" accept="image/*" required />
+            </div>
+            <div>
+              <label for="photo-model" data-i18n="label-photo-model">Calidad</label>
+              <select name="model" id="photo-model"></select>
+            </div>
+            <div>
+              <label for="photo-format" data-i18n="label-photo-format">Formato de salida</label>
+              <select name="output_format" id="photo-format"></select>
+            </div>
+            <button type="submit" data-i18n="btn-photo-upscale">Mejorar resolución</button>
+            <div class="progress" id="photo-progress" hidden>
+              <p class="progress-label" id="photo-progress-label">Preparando…</p>
+              <div class="progress-bar">
+                <div class="progress-fill" id="photo-progress-fill"></div>
+              </div>
+            </div>
+            <p class="status" id="photo-status"></p>
+          </form>
+        </section>
       </section>
 
       <section class="tab-panel hidden" id="jobs-tab">
@@ -855,6 +891,12 @@
           'jobs-empty': 'Todavía no tienes trabajos.',
           'jobs-download': 'Descargar', 'jobs-cancel': 'Cancelar', 'jobs-delete': 'Eliminar',
           'jobs-retry': 'Reintentar',
+          'photo-panel-title': 'Mejorar la resolución de una foto',
+          'label-photo-model': 'Calidad', 'label-photo-format': 'Formato de salida',
+          'btn-photo-upscale': 'Mejorar resolución',
+          'photo-sending': 'Subiendo la imagen…', 'photo-queued': 'En cola',
+          'photo-upscaling': 'Escalando en oCabra…', 'photo-ready': 'Listo, descargando…',
+          'photo-error': 'No se pudo escalar la imagen.',
           'jobs-created': 'Trabajo creado. Puedes seguirlo en «Mis trabajos».',
           'jobs-error': 'No se pudieron consultar los trabajos.',
           'label-transcription-model': 'Modelo de transcripción',
@@ -942,6 +984,12 @@
           'jobs-empty': 'You do not have any jobs yet.',
           'jobs-download': 'Download', 'jobs-cancel': 'Cancel', 'jobs-delete': 'Delete',
           'jobs-retry': 'Retry',
+          'photo-panel-title': 'Improve a photo\'s resolution',
+          'label-photo-model': 'Quality', 'label-photo-format': 'Output format',
+          'btn-photo-upscale': 'Improve resolution',
+          'photo-sending': 'Uploading the image…', 'photo-queued': 'Queued',
+          'photo-upscaling': 'Upscaling in oCabra…', 'photo-ready': 'Done, downloading…',
+          'photo-error': 'Could not upscale the image.',
           'jobs-created': 'Job created. You can follow it under “My jobs”.',
           'jobs-error': 'Could not retrieve jobs.',
           'label-transcription-model': 'Transcription model',
@@ -1729,6 +1777,110 @@
         } catch (error) {
           upscaleProgress.reset();
           upscaleStatusEl.textContent = error.message || t('upscale-queue-error');
+        }
+      });
+
+      const photoProgress = createProgressTracker(
+        document.getElementById('photo-progress'),
+        document.getElementById('photo-progress-label'),
+        document.getElementById('photo-progress-fill'),
+      );
+      const photoForm = document.getElementById('photo-form');
+      const photoFileInput = document.getElementById('photo-file');
+      const photoModelSelect = document.getElementById('photo-model');
+      const photoFormatSelect = document.getElementById('photo-format');
+      const photoStatusEl = document.getElementById('photo-status');
+      let photoPollTimer = null;
+
+      function stopPhotoPolling() {
+        if (photoPollTimer) { clearInterval(photoPollTimer); photoPollTimer = null; }
+      }
+
+      async function loadPhotoModels() {
+        if (!photoModelSelect) return;
+        try {
+          const response = await fetch('/api/images/upscale/models');
+          if (!response.ok) return;
+          const payload = await response.json();
+          photoModelSelect.innerHTML = '';
+          (payload.models || []).forEach((modelo) => {
+            const option = document.createElement('option');
+            option.value = modelo.id;
+            option.textContent = modelo.label || modelo.id;
+            photoModelSelect.appendChild(option);
+          });
+          if (payload.default) photoModelSelect.value = payload.default;
+          photoFormatSelect.innerHTML = '';
+          (payload.output_formats || ['png']).forEach((formato) => {
+            const option = document.createElement('option');
+            option.value = formato;
+            option.textContent = formato.toUpperCase();
+            photoFormatSelect.appendChild(option);
+          });
+          if (payload.default_output_format) photoFormatSelect.value = payload.default_output_format;
+        } catch (error) {
+          /* el panel se queda vacío y el servidor decide */
+        }
+      }
+      loadPhotoModels();
+
+      async function pollPhotoJob(jobId) {
+        try {
+          const response = await fetch(`/api/jobs/${jobId}`);
+          if (!response.ok) throw new Error(t('photo-error'));
+          const job = await response.json();
+          const partes = [];
+          if (job.status === 'queued') partes.push(t('photo-queued'));
+          else if (job.status === 'running') partes.push(t('photo-upscaling'));
+          const vivo = jobLiveStatus(job);
+          if (vivo) partes.push(vivo);
+          if (job.metadata?.delivered_resolution) partes.push(job.metadata.delivered_resolution);
+          photoStatusEl.textContent = partes.join(' · ') || job.status;
+          if (job.status === 'done') {
+            stopPhotoPolling();
+            photoProgress.finish();
+            photoStatusEl.textContent = t('photo-ready');
+            await downloadFromEndpoint(`/api/jobs/${jobId}/download`, {
+              statusTarget: photoStatusEl,
+            });
+            await loadJobsPanel();
+          } else if (['error', 'cancelled'].includes(job.status)) {
+            stopPhotoPolling();
+            photoProgress.reset();
+            photoStatusEl.textContent = job.error || t('photo-error');
+          }
+        } catch (error) {
+          stopPhotoPolling();
+          photoProgress.reset();
+          photoStatusEl.textContent = error.message || t('photo-error');
+        }
+      }
+
+      photoForm?.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        if (!photoFileInput?.files?.length) {
+          photoStatusEl.textContent = t('msg-no-file');
+          return;
+        }
+        const formData = new FormData();
+        formData.append('file', photoFileInput.files[0]);
+        formData.append('model', photoModelSelect?.value || '');
+        formData.append('output_format', photoFormatSelect?.value || '');
+        stopPhotoPolling();
+        photoProgress.reset();
+        photoProgress.start([t('photo-sending'), t('photo-upscaling')]);
+        photoStatusEl.textContent = t('photo-sending');
+        try {
+          const response = await fetch('/api/images/upscale', { method: 'POST', body: formData });
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(describeApiError(payload));
+          photoStatusEl.textContent = t('photo-queued');
+          photoPollTimer = setInterval(() => pollPhotoJob(payload.id), 3000);
+          pollPhotoJob(payload.id);
+          await loadJobsPanel();
+        } catch (error) {
+          photoProgress.reset();
+          photoStatusEl.textContent = error.message || t('photo-error');
         }
       });
 

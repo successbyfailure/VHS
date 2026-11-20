@@ -56,6 +56,7 @@ from openai import OpenAI
 
 from versioning import get_version
 from vhs import jobs as jobs_mod
+from vhs import images as images_mod
 from vhs import upscale as upscale_mod
 
 APP_TITLE = "VHS · Video Harvester Service"
@@ -840,6 +841,9 @@ KNOWN_MEDIA_EXTENSIONS = {
     ".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4v", ".flv", ".wmv", ".ts",
     ".mp3", ".ogg", ".oga", ".opus", ".wav", ".flac", ".aac", ".m4a", ".wma",
     ".srt", ".vtt", ".json", ".txt",
+    # De imagen, para que una foto subida no se descargue como "foto.png.png".
+    ".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tif", ".tiff",
+    ".avif", ".heic", ".heif",
 }
 
 JOBS_DIR = Path(
@@ -884,6 +888,64 @@ def _run_upscale_job(params: Dict, on_progress, should_cancel) -> Dict:
 
 
 _job_queue.register("upscale", _run_upscale_job)
+
+
+def _run_image_upscale_job(params: Dict, on_progress, should_cancel) -> Dict:
+    """Ejecutor del escalado de fotos. El trabajo pesado lo hace oCabra.
+
+    Es una sola petición, así que el progreso solo tiene dos pasos: mandar la
+    imagen y guardar lo que vuelve. Se deja como trabajo igualmente para que el
+    portal lo trate como todo lo demás y sobreviva a cerrar la pestaña.
+    """
+    source = Path(params["source"])
+    workdir = Path(params["workdir"])
+    workdir.mkdir(parents=True, exist_ok=True)
+    formato = params["output_format"]
+    try:
+        if should_cancel():
+            raise RuntimeError("Trabajo cancelado")
+        params["phase"] = "upscaling"
+        on_progress(0, 2)
+        datos = source.read_bytes()
+        escalada, entregada = images_mod.upscale_image(
+            datos,
+            nombre=source.name,
+            model=params["model"],
+            output_format=formato,
+            output_quality=params.get("output_quality"),
+            target_width=params.get("target_width"),
+            target_height=params.get("target_height"),
+            scale=params.get("scale"),
+        )
+        if should_cancel():
+            raise RuntimeError("Trabajo cancelado")
+        salida = workdir / f"upscaled{images_mod.extension_for(formato)}"
+        salida.write_bytes(escalada)
+        params["phase"] = "ready"
+        on_progress(2, 2)
+    finally:
+        # La imagen subida ya no hace falta, ni si falla.
+        cleanup_path(source)
+
+    original = images_mod.image_dimensions(datos)
+    return {
+        "path": salida,
+        "name": build_download_name(
+            params.get("filename") or "foto", salida, "image_upscale"
+        ),
+        "metadata": {
+            "title": params.get("filename") or "Foto escalada",
+            "media_format": "image_upscale",
+            "upscale_model": params["model"],
+            "output_format": formato,
+            "source_resolution": f"{original[0]}x{original[1]}" if original else "",
+            "delivered_resolution": entregada,
+            "filesize_bytes": len(escalada),
+        },
+    }
+
+
+_batch_job_queue.register("image_upscale", _run_image_upscale_job)
 
 
 def _batch_checkpoint(
@@ -4269,10 +4331,17 @@ async def job_download(request: Request, job_id: str):
             job.metadata.get("transcription_stats"),
             detect_request_source(request),
         )
+    if job.kind == "image_upscale":
+        # media_type_for_format() no conoce las imágenes y caería en video/mp4.
+        tipo = images_mod.media_type_for(
+            str(job.metadata.get("output_format") or "png")
+        )
+    else:
+        tipo = media_type_for_format(str(job.metadata.get("media_format") or ""))
     return FileResponse(
         path,
         filename=job.result_name or path.name,
-        media_type=media_type_for_format(str(job.metadata.get("media_format") or "")),
+        media_type=tipo,
     )
 
 
@@ -4315,6 +4384,95 @@ async def job_retry(request: Request, job_id: str):
     job.segments_done = 0
     _batch_job_queue.submit(job)
     return {"status": "queued", "resend": rehacer}
+
+
+@app.get("/api/images/upscale/models", response_class=JSONResponse)
+async def image_upscale_models() -> Dict[str, Any]:
+    """Modelos de escalado de fotos, con los tiempos medidos para la interfaz."""
+    opciones = images_mod.parse_models()
+    return {
+        "models": opciones,
+        "default": opciones[0]["id"] if opciones else "",
+        "output_formats": list(images_mod.OUTPUT_FORMATS),
+        "default_output_format": images_mod.resolve_output_format(None),
+        "max_pixels": images_mod.MAX_PIXELS,
+        "max_bytes": images_mod.MAX_BYTES,
+    }
+
+
+@app.post("/api/images/upscale", status_code=202)
+async def image_upscale_job(
+    request: Request,
+    model: Optional[str] = Form(None),
+    output_format: Optional[str] = Form(None),
+    output_quality: Optional[int] = Form(None),
+    target_width: Optional[int] = Form(None),
+    target_height: Optional[int] = Form(None),
+    scale: Optional[float] = Form(None),
+    file: UploadFile = File(...),
+):
+    """Crea un trabajo de escalado de foto y responde en el momento.
+
+    Tarda entre 7 y 45 segundos según modelo y tamaño, pero va como trabajo
+    igual que el resto: así se puede cerrar la pestaña y recoger el resultado
+    después, y el portal lo muestra en el mismo panel.
+    """
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Incluye una imagen")
+    try:
+        modelo = images_mod.resolve_model(model)
+        formato = images_mod.resolve_output_format(output_format)
+    except images_mod.ImageUpscaleError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    ensure_storage_ready()
+    temp_path = await save_upload_file(file)
+    try:
+        datos = await run_in_threadpool(temp_path.read_bytes)
+        # Se valida aquí para no gastar la subida al servidor en algo que ya
+        # sabemos que va a rechazar.
+        dimensiones = await run_in_threadpool(images_mod.validate_image, datos)
+    except images_mod.ImageUpscaleError as exc:
+        cleanup_path(temp_path)
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception:
+        cleanup_path(temp_path)
+        raise
+
+    job = jobs_mod.new_job(
+        "image_upscale",
+        {
+            "source": str(temp_path),
+            "workdir": str(JOBS_DIR / "pendiente"),
+            "filename": file.filename,
+            "model": modelo,
+            "output_format": formato,
+            "output_quality": output_quality,
+            "target_width": target_width,
+            "target_height": target_height,
+            "scale": scale,
+            "phase": "queued",
+        },
+        owner_id=request.state.owner_id,
+    )
+    job.params["workdir"] = str(JOBS_DIR / job.id)
+    job.metadata = {
+        "title": file.filename,
+        "media_format": "image_upscale",
+        "upscale_model": modelo,
+        "output_format": formato,
+        "source_resolution": f"{dimensiones[0]}x{dimensiones[1]}" if dimensiones else "",
+    }
+    job.segments_total = 2
+    _batch_job_queue.submit(job)
+    await run_in_threadpool(
+        record_download_event,
+        "image_upscale",
+        False,
+        None,
+        detect_request_source(request),
+    )
+    return job.public()
 
 
 @app.get("/api/upscale/models", response_class=JSONResponse)
