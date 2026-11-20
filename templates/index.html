@@ -1841,7 +1841,7 @@
           photoStatusEl.textContent = partes.join(' · ') || job.status;
           if (job.status === 'done') {
             stopPhotoPolling();
-            photoProgress.finish();
+            photoProgress.complete(t('photo-ready'));
             photoStatusEl.textContent = t('photo-ready');
             await downloadFromEndpoint(`/api/jobs/${jobId}/download`, {
               statusTarget: photoStatusEl,
