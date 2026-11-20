@@ -452,16 +452,27 @@ imagen completa. Medido con un fotograma real de 1920x1080 (salida 7680x4320):
 
 | Modelo | Tiempo | PNG |
 | --- | --- | --- |
-| `real-esrgan-compact-x4` | 6,9 s | 7,56 MB |
-| `remacri-x4` | 11,4 s | 5,73 MB |
-| `ultrasharp-x4` | 15,9 s | 8,06 MB |
-| `ultrasharp-v2-lite` | 16,8 s | 10,92 MB |
-| `realesrgan-x4plus` | 18,5 s | 10,25 MB |
+| `real-esrgan-compact-x4` | 6,9 / 7,1 s | 7,56 MiB |
+| `remacri-x4` | 11,4 / 10,6 s | 5,73 MiB |
+| `ultrasharp-x4` | 15,9 / 16,4 s | 8,06 MiB |
+| `ultrasharp-v2-lite` | 16,8 / 8,2 s | 10,92 MiB |
+| `realesrgan-x4plus` | 18,5 / 31,0 s | 10,25 MiB |
 
-El caso límite de 3840x2160 a 4x (132 megapíxeles) tarda 45 s y devuelve un PNG
-de 35,6 MB. `output_format=webp` da el mismo resultado pesando catorce veces
-menos (0,73 MB frente a 10,25 MB), así que es la opción recomendable para
-descargar; PNG queda para quien no quiera pérdida.
+**Los tiempos son un rango, no un número.** oCabra elige la tarjeta según la
+memoria libre en cada momento, y el mismo caso tarda **casi el doble en la 3060
+que en la 3090**: el 4x de una 4K son 27,8 s en la 3090 y unos 45 s en la 3060,
+y los parámetros opcionales bajan de 9-10 s a 4-6 s solo por caer en la tarjeta
+grande. Las dos columnas de arriba son dos tandas distintas del mismo caso; la
+diferencia entre ellas es la tarjeta, no el código. Para prometer algo al
+usuario conviene usar el peor caso (la 3060): unos 10 s para una 1080p con
+`realesrgan-x4plus` ya cargado y unos 45 s para una 4K. El 31,0 s de la última
+fila incluye además la carga del modelo.
+
+El caso límite de 3840x2160 a 4x son 132 megapíxeles y devuelve un PNG de
+35,6 MiB. `output_format=webp` da el mismo resultado pesando catorce veces
+menos (0,73 frente a 10,25 MiB), así que es la opción recomendable para
+descargar; PNG queda para quien no quiera pérdida. El escalado es determinista:
+los bytes de salida fueron idénticos en las dos tandas.
 
 Va como trabajo aunque tarde menos de un minuto: así se puede cerrar la pestaña
 y recoger el resultado después, y el portal lo muestra en el mismo panel que el
