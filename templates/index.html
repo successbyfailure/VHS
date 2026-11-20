@@ -1584,14 +1584,17 @@
               activateTab('jobs-tab');
               return;
             }
-            await downloadFromEndpoint(`/api/download`, {
-              statusTarget: statusElement,
-              progress: tracker,
-              fetchOptions: {
-                method: 'POST',
-                body: JSON.stringify(payload),
-              },
+            const response = await fetch('/api/jobs/media', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload),
             });
+            const job = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(describeApiError(job));
+            tracker.complete(t('jobs-created'));
+            statusElement.textContent = t('jobs-created');
+            await loadJobsPanel();
+            activateTab('jobs-tab');
           } catch (error) {
             console.error(error);
           }
@@ -1897,16 +1900,20 @@
         ffmpegProgress.start(getProgressSteps().ffmpeg);
         ffmpegStatusEl.textContent = getProgressSteps().ffmpeg[0] || '…';
         try {
-          await downloadFromEndpoint('/api/ffmpeg/upload', {
-            statusTarget: ffmpegStatusEl,
-            progress: ffmpegProgress,
-            fetchOptions: {
-              method: 'POST',
-              body: formData,
-            },
+          const response = await fetch('/api/jobs/upload', {
+            method: 'POST',
+            body: formData,
           });
+          const job = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(describeApiError(job));
+          ffmpegProgress.complete(t('jobs-created'));
+          ffmpegStatusEl.textContent = t('jobs-created');
+          ffmpegForm.reset();
+          await loadJobsPanel();
+          activateTab('jobs-tab');
         } catch (error) {
-          console.error(error);
+          ffmpegProgress.fail(error.message || t('jobs-error'));
+          ffmpegStatusEl.textContent = error.message || t('jobs-error');
         }
       });
 
@@ -1979,6 +1986,9 @@
         transcribed: { es: 'Transcripción terminada', en: 'Transcription complete' },
         translating: { es: 'Traduciendo en oCabra', en: 'Translating in oCabra' },
         translated: { es: 'Traducción terminada', en: 'Translation complete' },
+        downloading: { es: 'Descargando', en: 'Downloading' },
+        converting: { es: 'Convirtiendo', en: 'Converting' },
+        upscaling: { es: 'Escalando en oCabra', en: 'Upscaling in oCabra' },
         ready: { es: 'Listo', en: 'Ready' },
         cancelling: { es: 'Cancelando', en: 'Cancelling' },
       };

@@ -352,6 +352,30 @@ Para revisar modelos, métricas y cambios del servidor consulta
 `recomendado-stt` elige el mejor perfil disponible sin pagar un arranque en
 frío innecesario; actualmente prioriza `whisper-large-v3-turbo`.
 
+### Todo pasa por el panel de trabajos
+
+El portal ya no espera en la petición para nada: descargas, conversiones,
+transcripciones, escalado de vídeo y de fotos crean un trabajo y el resultado
+se recoge desde «Mis trabajos». Así se puede cerrar la pestaña, se ve en qué
+fase va cada cosa y todo se gestiona en el mismo sitio.
+
+Las rutas síncronas (`/api/download`, `/api/ffmpeg/upload`,
+`/api/transcribe/upload`) **se mantienen** para scripts y clientes que ya las
+usan: devolver `202` en ellas habría roto cualquier integración existente. El
+portal usa `/api/jobs/media` y `/api/jobs/upload`, que comparten exactamente la
+misma validación que las síncronas.
+
+Hay dos colas separadas: `MEDIA_JOB_CONCURRENCY` (2 por defecto) para descargas
+y conversiones, que gastan red y CPU local, y `BATCH_JOB_CONCURRENCY` (4) para
+lo que espera a oCabra. El escalado de vídeo tiene la suya en serie, porque ahí
+el cuello es la GPU local.
+
+**Cuidado con el resultado de una descarga**: vive en la caché compartida, no en
+el directorio del trabajo. Borrar o purgar el trabajo haría `rmtree` del
+directorio padre del resultado, es decir, de `CACHE_DIR` entera. Por eso el
+trabajo marca `result_external` y entonces solo se limpia su propio directorio.
+Hay tests que lo comprueban explícitamente.
+
 ### Trabajos persistentes y Batch
 
 Las transcripciones solicitadas desde el portal se crean como trabajos y

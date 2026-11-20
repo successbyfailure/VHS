@@ -57,6 +57,10 @@ class Job:
     error: Optional[str] = None
     result_path: Optional[str] = None
     result_name: Optional[str] = None
+    # El resultado no siempre es propiedad del trabajo: una descarga cacheada
+    # apunta a CACHE_DIR, y borrar el trabajo no puede llevarse la caché por
+    # delante.
+    result_external: bool = False
     cancel_requested: bool = False
 
     def public(self) -> Dict[str, Any]:
@@ -65,6 +69,7 @@ class Job:
         data.pop("result_path", None)
         data.pop("cancel_requested", None)
         data.pop("owner_id", None)
+        data.pop("result_external", None)
         params = data.pop("params", {})
         data["phase"] = params.get("phase", "")
         # Estado vivo del lote en oCabra: explica por qué un trabajo lleva un
@@ -132,14 +137,25 @@ class JobStore:
     def get(self, job_id: str) -> Optional[Job]:
         return self._jobs.get(job_id)
 
+    @staticmethod
+    def _cleanup_job_files(job: Job, cleanup: Callable[[Path], None]) -> None:
+        """Borra lo que es del trabajo y solo eso.
+
+        Con `result_external` el resultado vive fuera (la caché compartida), así
+        que se limpia únicamente el directorio de trabajo.
+        """
+        if job.result_path and not job.result_external:
+            cleanup(Path(job.result_path).parent)
+            return
+        workdir = job.params.get("workdir")
+        if workdir:
+            cleanup(Path(workdir))
+
     def remove(self, job_id: str, cleanup: Callable[[Path], None]) -> bool:
         job = self._jobs.pop(job_id, None)
         if job is None:
             return False
-        if job.result_path:
-            cleanup(Path(job.result_path).parent)
-        elif job.params.get("workdir"):
-            cleanup(Path(job.params["workdir"]))
+        self._cleanup_job_files(job, cleanup)
         self._path(job_id).unlink(missing_ok=True)
         return True
 
@@ -157,10 +173,7 @@ class JobStore:
                 continue
             if now - (job.finished_at or job.created_at) < JOB_TTL_SECONDS:
                 continue
-            if job.result_path:
-                cleanup(Path(job.result_path).parent)
-            elif job.params.get("workdir"):
-                cleanup(Path(job.params["workdir"]))
+            self._cleanup_job_files(job, cleanup)
             self._path(job.id).unlink(missing_ok=True)
             self._jobs.pop(job.id, None)
             removed += 1
@@ -264,6 +277,9 @@ class JobQueue:
                 job.result_path = str(result["path"])
                 job.result_name = result.get("name")
                 job.metadata = result.get("metadata", {})
+                # El ejecutor decide si el resultado es suyo o vive en la caché
+                # compartida, que no se puede borrar con el trabajo.
+                job.result_external = bool(result.get("external"))
         job.finished_at = time.time()
         self.store.persist(job)
 

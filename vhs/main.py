@@ -707,6 +707,7 @@ async def app_lifespan(_app: FastAPI):
     # La cola existe al arrancar el servidor aunque se declare más abajo en el
     # módulo; para entonces la importación ya ha terminado por completo.
     _batch_job_queue.resume_pending()
+    _media_job_queue.resume_pending()
     yield
 
 
@@ -858,6 +859,13 @@ _batch_job_queue = jobs_mod.JobQueue(
     _job_store,
     concurrency=max(1, int(os.getenv("BATCH_JOB_CONCURRENCY", "4"))),
 )
+# Descargas y conversiones: red y CPU local, no GPU. Van en su propia cola para
+# que una conversión larga no retrase una descarga, pero con tope: varias
+# llamadas a ffmpeg a la vez se pisan la CPU.
+_media_job_queue = jobs_mod.JobQueue(
+    _job_store,
+    concurrency=max(1, int(os.getenv("MEDIA_JOB_CONCURRENCY", "2"))),
+)
 BATCH_POLL_SECONDS = max(1.0, float(os.getenv("BATCH_POLL_SECONDS", "2")))
 
 
@@ -946,6 +954,124 @@ def _run_image_upscale_job(params: Dict, on_progress, should_cancel) -> Dict:
 
 
 _batch_job_queue.register("image_upscale", _run_image_upscale_job)
+
+
+def _run_media_job(params: Dict, on_progress, should_cancel) -> Dict:
+    """Ejecutor de descargas, conversiones y transcripciones desde URL.
+
+    Hace lo mismo que hacía la petición síncrona, pero como trabajo: el
+    resultado queda en la caché y se recoge desde el portal cuando esté. No se
+    puede interrumpir a mitad (yt-dlp y ffmpeg no lo admiten de forma limpia),
+    así que la cancelación solo se comprueba antes de empezar.
+    """
+    url = params["url"]
+    media_format = params["media_format"]
+    if should_cancel():
+        raise RuntimeError("Trabajo cancelado")
+    params["phase"] = "downloading"
+    on_progress(0, 1)
+    if media_format in TRANSCRIPTION_FORMATS:
+        params["phase"] = "transcribing"
+        file_path, metadata = generate_transcription_file(
+            url,
+            media_format,
+            params.get("transcription_model"),
+            bool(params.get("diarize")),
+        )
+    elif media_format in FFMPEG_PRESETS:
+        params["phase"] = "converting"
+        file_path, metadata = process_with_ffmpeg(url, media_format)
+    else:
+        file_path, metadata = download_media(url, media_format)
+    params["phase"] = "ready"
+    on_progress(1, 1)
+    record_download_event(
+        media_format,
+        bool(metadata.get("_cache_hit")),
+        metadata.get("transcription_stats"),
+        params.get("source") or "job",
+        provider=metadata.get("extractor_key") or metadata.get("extractor"),
+    )
+    return {
+        "path": file_path,
+        "name": build_download_name(
+            metadata.get("title", "vhs"), file_path, media_format
+        ),
+        "metadata": {**metadata, "media_format": media_format},
+        # El fichero vive en la caché compartida: no es del trabajo.
+        "external": True,
+    }
+
+
+_media_job_queue.register("media", _run_media_job)
+
+
+def _run_upload_job(params: Dict, on_progress, should_cancel) -> Dict:
+    """Ejecutor de las subidas: convertir o transcribir un fichero del usuario.
+
+    El resultado se escribe en el directorio del trabajo, así que aquí sí es
+    propiedad suya y se borra con él.
+    """
+    source = Path(params["source_path"])
+    workdir = Path(params["workdir"])
+    workdir.mkdir(parents=True, exist_ok=True)
+    media_format = params["media_format"]
+    try:
+        if should_cancel():
+            raise RuntimeError("Trabajo cancelado")
+        on_progress(0, 1)
+        if media_format in TRANSCRIPTION_FORMATS:
+            params["phase"] = "transcribing"
+            payload = transcribe_audio_file(
+                extract_audio_profile_from_file(source, "audio_med"),
+                media_format,
+                params.get("transcription_model"),
+                diarize=bool(params.get("diarize")),
+            )
+            payload = prepare_transcription_payload(payload, media_format)
+            if is_translation_format(media_format):
+                params["phase"] = "translating"
+                payload = translate_transcription_payload(payload, media_format)
+            extension = FORMAT_EXTENSIONS.get(media_format, ".txt")
+            salida = workdir / f"result{extension}"
+            salida.write_bytes(render_transcription_payload(payload, media_format))
+            extra = {"transcription_stats": estimate_transcription_stats(payload)}
+        else:
+            params["phase"] = "converting"
+            convertido = convert_uploaded_file_with_ffmpeg(source, media_format)
+            salida = workdir / convertido.name
+            if convertido.resolve() != salida.resolve():
+                shutil.move(str(convertido), salida)
+            extra = {}
+        params["phase"] = "ready"
+        on_progress(1, 1)
+    finally:
+        cleanup_path(source)
+
+    nombre = params.get("filename") or "vhs"
+    record_download_event(
+        media_format,
+        False,
+        extra.get("transcription_stats"),
+        params.get("source") or "job",
+    )
+    return {
+        "path": salida,
+        "name": build_download_name(nombre, salida, media_format),
+        "metadata": {
+            "title": nombre,
+            "media_format": media_format,
+            **extra,
+            **(
+                {"transcription_model": params["transcription_model"]}
+                if params.get("transcription_model")
+                else {}
+            ),
+        },
+    }
+
+
+_media_job_queue.register("upload", _run_upload_job)
 
 
 def _batch_checkpoint(
@@ -3835,16 +3961,14 @@ async def search_endpoint(
     return {"query": query.strip(), "items": items, "services": SUPPORTED_SERVICES}
 
 
-@app.post("/api/download")
-async def download_endpoint(
-    request: Request,
-    payload: Dict[str, Any] = Body(..., description="JSON con url y format"),
-):
-    request.state.source = payload.get("source")
+def _validate_media_request(payload: Dict[str, Any]) -> Tuple[str, str, Optional[str], bool]:
+    """Comprueba url, formato y modelo. Devuelve lo ya normalizado."""
     url = (payload.get("url") or "").strip()
     if not url:
         raise HTTPException(status_code=400, detail="Incluye una URL válida en el cuerpo")
-    media_format_raw = payload.get("format") or payload.get("media_format") or DEFAULT_VIDEO_FORMAT
+    media_format_raw = (
+        payload.get("format") or payload.get("media_format") or DEFAULT_VIDEO_FORMAT
+    )
     format_value = str(media_format_raw).lower()
     if format_value not in SUPPORTED_MEDIA_FORMATS:
         raise HTTPException(
@@ -3862,14 +3986,129 @@ async def download_endpoint(
     transcription_model = (
         str(transcription_model_raw).strip() if transcription_model_raw else None
     )
-    if normalized_format in TRANSCRIPTION_FORMATS and transcription_model:
+    if normalized_format in TRANSCRIPTION_FORMATS:
         try:
-            if effective_diarize:
-                resolve_diarization_model(transcription_model)
-            else:
-                resolve_transcription_model(transcription_model)
+            if transcription_model:
+                if effective_diarize:
+                    resolve_diarization_model(transcription_model)
+                else:
+                    resolve_transcription_model(transcription_model)
+            if is_translation_format(normalized_format):
+                resolve_translation_model()
         except DownloadError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return url, normalized_format, transcription_model, effective_diarize
+
+
+@app.post("/api/jobs/media", status_code=202)
+async def media_job(
+    request: Request,
+    payload: Dict[str, Any] = Body(..., description="JSON con url y format"),
+):
+    """Encola una descarga, conversión o transcripción desde una URL.
+
+    Es la versión en trabajo de `/api/download`: responde en el momento y el
+    resultado se recoge desde el panel, así que se puede cerrar la pestaña.
+    """
+    request.state.source = payload.get("source")
+    url, media_format, modelo, diarize = _validate_media_request(payload)
+    ensure_storage_ready()
+    job = jobs_mod.new_job(
+        "media",
+        {
+            "url": url,
+            "media_format": media_format,
+            "transcription_model": modelo,
+            "diarize": diarize,
+            "source": detect_request_source(request),
+            "phase": "queued",
+        },
+        owner_id=request.state.owner_id,
+    )
+    job.params["workdir"] = str(JOBS_DIR / job.id)
+    job.metadata = {"title": url, "media_format": media_format}
+    job.segments_total = 1
+    _media_job_queue.submit(job)
+    return job.public()
+
+
+@app.post("/api/jobs/upload", status_code=202)
+async def upload_job(
+    request: Request,
+    media_format: str = Form(...),
+    transcription_model: Optional[str] = Form(None),
+    diarize: Optional[str] = Form(None),
+    file: UploadFile = File(...),
+):
+    """Encola la conversión o la transcripción de un fichero subido.
+
+    Versión en trabajo de `/api/ffmpeg/upload` y `/api/transcribe/upload`: el
+    fichero se guarda y el portal recoge el resultado cuando esté.
+    """
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Incluye un archivo")
+    formato = (media_format or "").strip().lower()
+    normalizado = normalize_media_format(formato)
+    if normalizado not in FFMPEG_PRESETS and normalizado not in TRANSCRIPTION_FORMATS:
+        raise HTTPException(
+            status_code=400,
+            detail="Formato no soportado para una subida. Usa un perfil ffmpeg o de transcripción.",
+        )
+    modelo = (transcription_model or "").strip() or None
+    efectivo = parse_bool_flag(diarize) or is_diarization_format(normalizado)
+    if normalizado in TRANSCRIPTION_FORMATS:
+        try:
+            ensure_transcription_ready()
+            if modelo:
+                if efectivo:
+                    resolve_diarization_model(modelo)
+                else:
+                    resolve_transcription_model(modelo)
+            if is_translation_format(normalizado):
+                resolve_translation_model()
+        except DownloadError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    ensure_storage_ready()
+    temp_path = await save_upload_file(file)
+    job = jobs_mod.new_job(
+        "upload",
+        {
+            "source_path": str(temp_path),
+            "media_format": normalizado,
+            "transcription_model": modelo,
+            "diarize": efectivo,
+            "filename": file.filename,
+            "source": detect_request_source(request),
+            "phase": "queued",
+        },
+        owner_id=request.state.owner_id,
+    )
+    job.params["workdir"] = str(JOBS_DIR / job.id)
+    job.metadata = {"title": file.filename, "media_format": normalizado}
+    job.segments_total = 1
+    _media_job_queue.submit(job)
+    return job.public()
+
+
+@app.post("/api/download")
+async def download_endpoint(
+    request: Request,
+    payload: Dict[str, Any] = Body(..., description="JSON con url y format"),
+):
+    """Descarga directa, esperando en la propia petición.
+
+    Se mantiene para scripts y clientes existentes; el portal usa
+    `/api/jobs/media`, que no deja la conexión abierta.
+    """
+    request.state.source = payload.get("source")
+    (
+        url,
+        normalized_format,
+        transcription_model,
+        effective_diarize,
+    ) = _validate_media_request(payload)
+    format_value = normalized_format
 
     try:
         ensure_storage_ready()

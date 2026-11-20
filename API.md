@@ -121,6 +121,14 @@ por su propietario y devuelven `404` para trabajos de otra sesión.
 - `GET /api/jobs/{id}`: estado y progreso.
 - `GET /api/jobs/{id}/download`: descarga el resultado terminado.
 - `DELETE /api/jobs/{id}`: cancela un trabajo activo o elimina uno terminado.
+- `POST /api/jobs/media`: encola una descarga, conversión o transcripción desde
+  una URL (JSON con `url`, `format` y los opcionales `transcription_model` y
+  `diarize`). Responde `202` con el trabajo. Es la versión en trabajo de
+  `/api/download`, que se mantiene para quien quiera esperar en la petición.
+- `POST /api/jobs/upload`: encola la conversión o la transcripción de un
+  fichero subido (multipart con `file`, `media_format` y los opcionales
+  `transcription_model` y `diarize`). Versión en trabajo de
+  `/api/ffmpeg/upload` y `/api/transcribe/upload`.
 - `GET /api/images/upscale/models`: modelos de escalado de fotos, formatos de
   salida y límites de entrada.
 - `POST /api/images/upscale`: crea un trabajo de escalado de foto (multipart
