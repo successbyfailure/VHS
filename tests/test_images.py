@@ -130,12 +130,46 @@ def test_el_mensaje_de_error_se_saca_de_las_dos_formas():
     assert images_mod._mensaje_de_error(anidado) == "anidado"
 
 
-def test_la_imagen_demasiado_grande_se_explica_aunque_no_traiga_codigo():
-    """El 413 del servidor viene con code a null."""
-    respuesta = _Respuesta(413, {"error": {"message": "tiene 4200x2362 px", "code": None}})
+def test_se_prefiere_el_mensaje_del_servidor_que_trae_las_medidas():
+    respuesta = _Respuesta(
+        413, {"error": {"message": "tiene 4200x2362 px", "code": "image_too_large"}}
+    )
     assert "4200x2362" in images_mod._mensaje_de_error(respuesta)
+
+
+def test_los_codigos_de_error_se_reconocen():
+    """Desde oCabra 0.122.3 cada error trae error.code en la raíz."""
+    casos = {
+        "image_too_large": "píxeles",
+        "file_too_large": "pesa",
+        "invalid_image": "no es una imagen",
+        "empty_image": "vacía",
+        "invalid_output_format": "png",
+        "model_not_capable": "no sirve para escalar",
+    }
+    for codigo, esperado in casos.items():
+        respuesta = _Respuesta(400, {"error": {"code": codigo, "message": None}})
+        mensaje = images_mod._mensaje_de_error(respuesta)
+        assert esperado in mensaje, (codigo, mensaje)
+
+
+def test_un_413_sin_cuerpo_legible_se_explica_igual():
+    """Antes se deducía del status porque el 413 llegaba sin código."""
     sin_cuerpo = _Respuesta(413, "vaya")
-    assert "demasiado grande" in images_mod._mensaje_de_error(sin_cuerpo)
+    assert "píxeles" in images_mod._mensaje_de_error(sin_cuerpo)
+
+
+def test_detail_sigue_valiendo_de_respaldo():
+    """`detail` está obsoleto (0.121.0) pero no se deja de leer todavía."""
+    codigo, mensaje = images_mod._leer_error(
+        _Respuesta(400, {"detail": {"error": {"code": "invalid_value", "message": "mal"}}})
+    )
+    assert (codigo, mensaje) == ("invalid_value", "mal")
+
+
+def test_la_falta_de_vram_se_explica():
+    respuesta = _Respuesta(507, {"error": {"message": None, "code": None}})
+    assert "memoria de GPU" in images_mod._mensaje_de_error(respuesta)
 
 
 def test_el_503_incluye_cuanto_esperar():

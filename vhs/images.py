@@ -223,31 +223,66 @@ def upscale_image(
     return respuesta.content, entregada
 
 
-def _mensaje_de_error(respuesta: httpx.Response) -> str:
-    """Saca el mensaje útil del cuerpo, que llega anidado de dos formas.
+def _leer_error(respuesta: httpx.Response) -> Tuple[Optional[str], Optional[str]]:
+    """Devuelve (code, message) del cuerpo de error.
 
-    Las reglas por código se aplican aunque el cuerpo no sea JSON: si no, un
-    413 con un cuerpo cualquiera se explicaba como un error genérico.
+    Desde oCabra 0.121.0 el error va en la raíz y `detail` está anunciado como
+    obsoleto, pero se sigue leyendo como respaldo para no depender de la
+    versión del servidor.
     """
-    texto = respuesta.text[:300]
-    mensaje: Optional[str] = None
     try:
         cuerpo = respuesta.json()
     except ValueError:
-        cuerpo = None
-    if isinstance(cuerpo, dict):
-        error = cuerpo.get("error")
-        if not isinstance(error, dict):
-            detalle = cuerpo.get("detail")
-            if isinstance(detalle, dict):
-                error = detalle.get("error")
-        if isinstance(error, dict):
-            mensaje = error.get("message")
+        return None, None
+    if not isinstance(cuerpo, dict):
+        return None, None
+    error = cuerpo.get("error")
+    if not isinstance(error, dict):
+        detalle = cuerpo.get("detail")
+        error = detalle.get("error") if isinstance(detalle, dict) else None
+    if not isinstance(error, dict):
+        return None, None
+    codigo = error.get("code")
+    mensaje = error.get("message")
+    return (str(codigo) if codigo else None), (str(mensaje) if mensaje else None)
+
+
+# Mensajes propios para los códigos que el usuario puede corregir por su
+# cuenta. El resto se muestra tal cual lo manda el servidor.
+_EXPLICACIONES = {
+    "image_too_large": "La imagen tiene demasiados píxeles para escalarla. Redúcela antes.",
+    "file_too_large": "La imagen pesa demasiado para escalarla.",
+    "invalid_image": "El archivo no es una imagen que se pueda escalar.",
+    "empty_image": "La imagen está vacía.",
+    "invalid_output_format": "Formato de salida no soportado. Usa png, jpeg o webp.",
+    "invalid_response_format": "Formato de respuesta no soportado.",
+    "missing_required_parameter": "Falta un parámetro obligatorio en la petición.",
+    "model_not_capable": "Ese modelo no sirve para escalar imágenes.",
+}
+
+
+def _mensaje_de_error(respuesta: httpx.Response) -> str:
+    """Convierte la respuesta de error en algo que se le pueda mostrar.
+
+    Se prefiere `error.code`, que identifica el problema sin ambigüedad. Antes
+    había que deducirlo del status porque el 413 llegaba sin código.
+    """
+    codigo, mensaje = _leer_error(respuesta)
+    if codigo and codigo in _EXPLICACIONES:
+        # El mensaje del servidor es más concreto (trae las medidas), así que
+        # se usa si está y la explicación propia queda de respaldo.
+        return mensaje or _EXPLICACIONES[codigo]
     if respuesta.status_code == 413:
-        # El servidor no manda `code` en este caso, así que se reconoce aquí.
-        return mensaje or "La imagen es demasiado grande para escalarla"
+        return mensaje or _EXPLICACIONES["image_too_large"]
     if respuesta.status_code == 503:
         espera = respuesta.headers.get("Retry-After")
         sufijo = f" Vuelve a intentarlo en {espera} s." if espera else ""
         return (mensaje or "El servicio de escalado no está disponible") + sufijo
-    return mensaje or f"El servicio de escalado devolvió {respuesta.status_code}: {texto}"
+    if respuesta.status_code == 507:
+        return mensaje or "No hay memoria de GPU libre para escalar la imagen ahora."
+    if mensaje:
+        return mensaje
+    return (
+        f"El servicio de escalado devolvió {respuesta.status_code}: "
+        f"{respuesta.text[:300]}"
+    )
